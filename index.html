@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GrapesJS Tailwind Editor</title>
+    <link rel="stylesheet" href="dist/output.css">
+    <script src="node_modules/grapesjs/dist/grapes.min.js"></script>
+    <link rel="stylesheet" href="node_modules/grapesjs/dist/css/grapes.min.css">
+    <style>
+        body { 
+            margin: 0;
+            min-width: 1200px;
+        }
+        .editor-row {
+            display: flex;
+            justify-content: flex-start;
+            align-items: stretch;
+            flex-wrap: nowrap;
+            height: 100vh;
+        }
+        .editor-canvas {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 600px;
+            position: relative;
+        }
+        .panel__right {
+            flex-basis: 280px;
+            min-width: 280px;
+            position: relative;
+            overflow-y: auto;
+            background: #f5f5f5;
+            border-left: 1px solid #ddd;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            width: 280px;
+        }
+        .panel__top {
+            background: #fff;
+            padding: 5px 10px;
+            min-height: 40px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #ddd;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .panel__basic-actions {
+            display: flex;
+            gap: 5px;
+            padding: 5px;
+            position: relative;
+        }
+        .panel__basic-actions button {
+            padding: 5px 10px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .panel__basic-actions button:hover {
+            background: #f5f5f5;
+        }
+        .panel__switcher {
+            display: flex;
+            gap: 5px;
+            padding: 5px;
+        }
+        .panel__devices {
+            margin-left: auto;
+            display: flex;
+            gap: 5px;
+            padding: 5px;
+        }
+        #blocks {
+            width: 200px;
+            min-width: 200px;
+            height: 100%;
+            position: relative;
+            background: #f5f5f5;
+            overflow-y: auto;
+            border-right: 1px solid #ddd;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        .gjs-block {
+            width: calc(100% - 10px);
+            height: auto;
+            min-height: 45px;
+            margin: 5px;
+            cursor: move;
+            text-align: center;
+            padding: 8px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            box-sizing: border-box;
+            transition: all 0.2s ease;
+        }
+        .gjs-block:hover { 
+            color: #d278c9;
+            border-color: #d278c9;
+            box-shadow: 0 0 3px rgba(210, 120, 201, 0.2);
+        }
+        .gjs-block-label {
+            font-size: 12px;
+            font-weight: 500;
+            display: block;
+            padding: 3px;
+        }
+        .gjs-one-bg {
+            background-color: #f5f5f5;
+        }
+        .gjs-two-color {
+            color: #363636;
+        }
+        .gjs-three-bg {
+            background-color: #363636;
+            color: white;
+        }
+        #gjs {
+            border-top: 1px solid #ddd;
+        }
+        .layers-container {
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            flex-shrink: 0;
+        }
+        #styles-container {
+            padding: 15px;
+            height: auto;
+            overflow-y: auto;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .gjs-sm-sectors {
+            height: auto;
+            min-height: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .gjs-sm-sector {
+            margin-bottom: 10px;
+            padding: 5px;
+            display: block !important;
+        }
+        .gjs-sm-sector-title {
+            padding: 5px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .gjs-sm-properties {
+            display: block;
+            padding: 10px 5px;
+        }
+        .gjs-sm-property {
+            display: block !important;
+            margin-bottom: 10px;
+            padding: 5px;
+        }
+        .gjs-sm-label {
+            font-size: 12px;
+        }
+        .gjs-field {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .gjs-layer {
+            padding: 5px;
+            font-size: 12px;
+        }
+        .gjs-layer-title {
+            padding: 5px;
+        }
+        /* Dropdown styles */
+        .gjs-pn-btn {
+            position: relative;
+        }
+        .gjs-pn-btn .dropdown-content {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background-color: white;
+            min-width: 160px;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .gjs-pn-btn.active .dropdown-content {
+            display: block;
+        }
+        .gjs-pn-btn .dropdown-content a {
+            color: black;
+            padding: 8px 12px;
+            text-decoration: none;
+            display: block;
+            font-size: 12px;
+        }
+        .gjs-pn-btn .dropdown-content a:hover {
+            background-color: #f5f5f5;
+        }
+        .gjs-pn-btn .dropdown-content a.active {
+            background-color: #e9ecef;
+        }
+        .gjs-cv-canvas {
+            width: 100% !important;
+            height: 100%;
+            top: 0;
+        }
+        .gjs-pn-panel {
+            position: relative !important;
+            right: auto !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="editor-row">
+        <div id="blocks"></div>
+        <div class="editor-canvas">
+            <div class="panel__top">
+                <div class="panel__basic-actions"></div>
+                <div class="panel__switcher"></div>
+                <div class="panel__devices"></div>
+            </div>
+            <div id="gjs"></div>
+        </div>
+        <div class="panel__right">
+            <div class="layers-container"></div>
+            <div id="styles-container"></div>
+        </div>
+    </div>
+    <script type="module">
+        import './js/editor.js';
+    </script>
+</body>
+</html> 
