@@ -11,7 +11,33 @@ A web-based HTML editor built using GrapesJS, allowing users to create and edit 
 - Style management with Tailwind CSS integration
 - Real-time preview of changes
 
-## Setup
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+- Node.js and npm
+- Python 3 (for running a local server)
+
+## Initial Setup
+
+1. Install required packages:
+```bash
+npm init -y
+npm install -D tailwindcss
+npm install grapesjs
+npx tailwindcss init
+```
+
+2. Set up a local server (choose one method):
+```bash
+# Using Python 3
+python3 -m http.server 3000
+
+# OR using Node.js http-server
+npm install -g http-server
+http-server -p 3000
+```
+
+## Project Setup
 
 1. Clone the repository:
 ```bash
