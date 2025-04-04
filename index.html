@@ -7,6 +7,14 @@
     <link rel="stylesheet" href="dist/output.css">
     <script src="node_modules/grapesjs/dist/grapes.min.js"></script>
     <link rel="stylesheet" href="node_modules/grapesjs/dist/css/grapes.min.css">
+    
+    <!-- React and React DOM -->
+    <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
     <style>
         body { 
             margin: 0;
@@ -56,15 +64,29 @@
             position: relative;
         }
         .panel__basic-actions button {
-            padding: 5px 10px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            background: white;
+            border: none;
+            margin-right: 5px;
+            padding: 6px 10px;
+            border-radius: 4px;
+            background-color: #4a4a4a;
+            color: white;
             cursor: pointer;
-            font-size: 12px;
+            transition: background-color 0.3s ease;
         }
         .panel__basic-actions button:hover {
-            background: #f5f5f5;
+            background-color: #666;
+        }
+        .btn-save {
+            background-color: #28a745 !important;
+        }
+        .btn-save:hover {
+            background-color: #218838 !important;
+        }
+        .btn-load {
+            background-color: #007bff !important;
+        }
+        .btn-load:hover {
+            background-color: #0056b3 !important;
         }
         .panel__switcher {
             display: flex;
@@ -171,6 +193,43 @@
             width: 100%;
             box-sizing: border-box;
         }
+        .gjs-field-color-picker {
+            width: 30px;
+            height: 30px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+        .gjs-field-color-picker input[type="color"] {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .gjs-checker-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: linear-gradient(45deg, #808080 25%, transparent 25%),
+                            linear-gradient(-45deg, #808080 25%, transparent 25%),
+                            linear-gradient(45deg, transparent 75%, #808080 75%),
+                            linear-gradient(-45deg, transparent 75%, #808080 75%);
+            background-size: 10px 10px;
+            background-position: 0 0, 0 5px, 5px -5px, -5px 0px;
+        }
+        .gjs-field-colorp-c {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
         .gjs-layer {
             padding: 5px;
             font-size: 12px;
@@ -239,6 +298,294 @@
     </div>
     <script type="module">
         import './js/editor.js';
+    </script>
+    
+    <!-- Color Picker React Component -->
+    <div id="color-picker-root"></div>
+    
+    <script type="text/babel">
+        // Create a React component for the color picker
+        const ColorPickerModal = ({ isOpen, onClose, initialColor, onApply }) => {
+            const [color, setColor] = React.useState(initialColor || '#aabbcc');
+            
+            if (!isOpen) return null;
+            
+            const modalStyles = {
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 99999,
+                backgroundColor: 'rgba(0, 0, 0, 0.5)'
+            };
+            
+            const panelStyles = {
+                backgroundColor: 'white',
+                padding: '16px',
+                borderRadius: '12px',
+                boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.25)',
+                width: '280px'
+            };
+            
+            const titleStyles = {
+                fontSize: '18px',
+                fontWeight: 600,
+                marginBottom: '12px',
+                fontFamily: 'Arial, sans-serif',
+                color: '#333'
+            };
+            
+            const previewContainerStyles = {
+                display: 'flex',
+                alignItems: 'center', 
+                marginTop: '12px',
+                marginBottom: '8px'
+            };
+            
+            const previewStyles = {
+                height: '32px',
+                flexGrow: 1,
+                marginRight: '8px',
+                borderRadius: '4px',
+                border: '1px solid #ddd',
+                backgroundColor: color,
+                boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.1)'
+            };
+            
+            const inputStyles = {
+                width: '96px',
+                padding: '4px 8px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                fontFamily: 'monospace',
+                fontSize: '14px'
+            };
+            
+            const buttonContainerStyles = {
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '8px',
+                marginTop: '12px'
+            };
+            
+            const cancelButtonStyles = {
+                padding: '6px 14px',
+                backgroundColor: '#e2e8f0',
+                borderRadius: '4px',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: 'Arial, sans-serif',
+                fontSize: '14px',
+                fontWeight: 500
+            };
+            
+            const applyButtonStyles = {
+                padding: '6px 14px',
+                backgroundColor: '#3b82f6',
+                color: 'white',
+                borderRadius: '4px',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: 'Arial, sans-serif',
+                fontSize: '14px',
+                fontWeight: 500
+            };
+            
+            return (
+                <div style={modalStyles} onClick={onClose}>
+                    <div style={panelStyles} onClick={e => e.stopPropagation()}>
+                        <h2 style={titleStyles}>Choose Color</h2>
+                        
+                        {/* Custom Color Grid */}
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(8, 1fr)',
+                            gap: '4px',
+                            marginBottom: '16px'
+                        }}>
+                            {[
+                                // Row 1: Grayscale
+                                '#000000', '#333333', '#666666', '#999999', '#cccccc', '#ffffff', '#f8f9fa', '#e9ecef',
+                                // Row 2: Standard colors
+                                '#ff0000', '#ff8700', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#8b00ff', '#ff00ff',
+                                // Row 3: Pastels
+                                '#ffb6c1', '#ffd700', '#98fb98', '#add8e6', '#dda0dd', '#f0e68c', '#f08080', '#e0ffff',
+                                // Row 4: Dark colors
+                                '#800000', '#8b4513', '#006400', '#008080', '#000080', '#4b0082', '#800080', '#2f4f4f'
+                            ].map((colorValue) => (
+                                <div 
+                                    key={colorValue}
+                                    style={{
+                                        backgroundColor: colorValue,
+                                        width: '100%',
+                                        height: '24px',
+                                        border: color === colorValue ? '3px solid #000' : '1px solid #ccc',
+                                        cursor: 'pointer',
+                                        borderRadius: '3px',
+                                        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2)',
+                                        transition: 'transform 0.1s',
+                                        transform: color === colorValue ? 'scale(1.1)' : 'scale(1)'
+                                    }}
+                                    onClick={() => setColor(colorValue)}
+                                    title={colorValue}
+                                />
+                            ))}
+                        </div>
+                        
+                        {/* Standard Color Input */}
+                        <div style={{
+                            marginBottom: '16px',
+                            border: '1px solid #ddd',
+                            borderRadius: '6px',
+                            padding: '8px',
+                            backgroundColor: '#f9f9f9'
+                        }}>
+                            <div style={{
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                marginBottom: '6px',
+                                color: '#555',
+                                fontFamily: 'Arial, sans-serif'
+                            }}>
+                                Selected Color
+                            </div>
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px'
+                            }}>
+                                <div style={{
+                                    height: '36px',
+                                    flexGrow: 1,
+                                    borderRadius: '4px',
+                                    border: '1px solid #ddd',
+                                    backgroundColor: color,
+                                    boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.1)'
+                                }}></div>
+                                <input 
+                                    type="text" 
+                                    value={color} 
+                                    onChange={e => setColor(e.target.value)}
+                                    style={{
+                                        width: '96px',
+                                        padding: '8px',
+                                        border: '1px solid #ddd',
+                                        borderRadius: '4px',
+                                        fontFamily: 'monospace',
+                                        fontSize: '14px',
+                                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                                        textAlign: 'center'
+                                    }}
+                                />
+                            </div>
+                        </div>
+                        
+                        <div style={{
+                            marginBottom: '16px',
+                            border: '1px solid #ddd',
+                            borderRadius: '6px',
+                            padding: '8px',
+                            backgroundColor: '#f9f9f9'
+                        }}>
+                            <div style={{
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                marginBottom: '6px',
+                                color: '#555',
+                                fontFamily: 'Arial, sans-serif'
+                            }}>
+                                Custom Color
+                            </div>
+                            <input 
+                                type="color" 
+                                value={color}
+                                onChange={e => setColor(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    height: '40px',
+                                    padding: '0',
+                                    border: '1px solid #ccc',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                                }}
+                            />
+                        </div>
+                        
+                        <div style={buttonContainerStyles}>
+                            <button
+                                style={cancelButtonStyles}
+                                onClick={onClose}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                style={applyButtonStyles}
+                                onClick={() => {
+                                    onApply(color);
+                                    onClose();
+                                }}
+                            >
+                                Apply
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
+        // Create a class to manage the color picker
+        class ColorPickerManager {
+            constructor() {
+                this.root = document.getElementById('color-picker-root');
+                this.isOpen = false;
+                this.currentField = null;
+                this.initialColor = '#ffffff';
+                this.onApply = null;
+            }
+            
+            open(field, initialColor, onApply) {
+                this.currentField = field;
+                this.initialColor = initialColor || '#ffffff';
+                this.onApply = onApply;
+                this.isOpen = true;
+                this.render();
+            }
+            
+            close() {
+                this.isOpen = false;
+                this.render();
+            }
+            
+            render() {
+                ReactDOM.render(
+                    <ColorPickerModal 
+                        isOpen={this.isOpen}
+                        onClose={() => this.close()}
+                        initialColor={this.initialColor}
+                        onApply={(color) => {
+                            if (this.onApply) {
+                                this.onApply(color);
+                            }
+                        }}
+                    />,
+                    this.root
+                );
+            }
+        }
+        
+        // Create a global instance of the color picker manager
+        window.colorPickerManager = new ColorPickerManager();
+        
+        // Initial render
+        window.colorPickerManager.render();
+        
+        // Log to help with debugging
+        console.log("Color picker manager initialized:", window.colorPickerManager);
     </script>
 </body>
 </html> 
