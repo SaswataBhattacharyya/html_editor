@@ -135,16 +135,33 @@ const editor = grapesjs.init({
             {
                 id: 'button',
                 label: 'Button',
-                content: '<button class="button">Click me</button>',
+                content: {
+                    type: 'button',
+                    content: 'Click me',
+                    style: { 
+                        'display': 'inline-block',
+                        'padding': '10px 20px',
+                        'background-color': '#4CAF50',
+                        'color': 'white',
+                        'border': 'none',
+                        'border-radius': '8px',
+                        'cursor': 'pointer',
+                        'font-size': '16px',
+                        'text-align': 'center'
+                    }
+                },
                 category: 'basic',
             },
             {
                 id: 'image-with-text',
                 label: 'Image + Text',
                 attributes: { class:'gjs-block-section' },
-                content: `<div style="display: flex; align-items: center; gap: 20px; padding: 10px; background-color: #f8f9fa; border: 1px dashed #dee2e6;">
-                    <div style="flex: 1;">
-                        <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIiBmaWxsPSIjRThFOEU4Ii8+CjxwYXRoIGQ9Ik01MC41IDQyLjVDNTAuNSA0Ni42NDIxIDQ3LjE0MjEgNTAgNDMgNTBDMzguODU3OSA1MCAzNS41IDQ2LjY0MjEgMzUuNSA0Mi41QzM1LjUgMzguMzU3OSAzOC44NTc5IDM1IDQzIDM1QzQ3LjE0MjEgMzUgNTAuNSAzOC4zNTc5IDUwLjUgNDIuNVoiIGZpbGw9IiM5QTlBOUEiLz4KPHBhdGggZD0iTTc2LjUgNjhDNzYuNSA1Ni40MDIgNjcuMzQ4IDQ3IDU1Ljc1IDQ3SDQ0LjI1QzMyLjY1MiA0NyAyMy41IDU2LjQwMiAyMy41IDY4VjcwSDc2LjVWNjhaIiBmaWxsPSIjOUE5QTlBIi8+Cjwvc3ZnPgo=" style="width:100%; height:auto; max-width:150px;" alt="Placeholder image">
+                content: `<div style="display: flex; align-items: flex-start; gap: 20px; padding: 10px; background-color: #f8f9fa; border: 1px dashed #dee2e6;">
+                    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; width: 100%;">
+                        <div style="width: 100%; overflow: hidden; display: flex; justify-content: center; align-items: center; background-color: #e9ecef; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px;">
+                            <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIiBmaWxsPSIjRThFOEU4Ii8+CjxwYXRoIGQ9Ik01MC41IDQyLjVDNTAuNSA0Ni42NDIxIDQ3LjE0MjEgNTAgNDMgNTBDMzguODU3OSA1MCAzNS41IDQ2LjY0MjEgMzUuNSA0Mi41QzM1LjUgMzguMzU3OSAzOC44NTc5IDM1IDQzIDM1QzQ3LjE0MjEgMzUgNTAuNSAzOC4zNTc5IDUwLjUgNDIuNVoiIGZpbGw9IiM5QTlBOUEiLz4KPHBhdGggZD0iTTc2LjUgNjhDNzYuNSA1Ni40MDIgNjcuMzQ4IDQ3IDU1Ljc1IDQ3SDQ0LjI1QzMyLjY1MiA0NyAyMy41IDU2LjQwMiAyMy41IDY4VjcwSDc2LjVWNjhaIiBmaWxsPSIjOUE5QTlBIi8+Cjwvc3ZnPgo=" style="width: auto; height: auto; max-width: 100%; max-height: 250px;" alt="Placeholder image">
+                        </div>
+                        <div style="width: 100%; padding: 8px; font-size: 14px; color: #6c757d; text-align: center; font-style: italic; margin-top: 8px;" data-gjs-type="text">Image caption or legend</div>
                     </div>
                     <div style="flex: 2;">
                         <h3 style="margin-top:0;">Image with Text</h3>
@@ -169,19 +186,30 @@ const editor = grapesjs.init({
             {
                 name: 'Typography',
                 open: false,
-                buildProps: ['font-family', 'font-size', 'font-weight', 'letter-spacing', 'color', 'line-height', 'text-align'],
+                buildProps: ['font-family', 'font-size', 'font-weight', 'letter-spacing', 'color', 'line-height', 'text-align', 'text-transform'],
                 properties: [
                     {
                         property: 'color',
                         type: 'color',
                         defaults: '#000000'
+                    },
+                    {
+                        property: 'text-transform',
+                        type: 'select',
+                        defaults: 'none',
+                        options: [
+                            { value: 'none', name: 'None' },
+                            { value: 'uppercase', name: 'Uppercase' },
+                            { value: 'lowercase', name: 'Lowercase' },
+                            { value: 'capitalize', name: 'Capitalize' }
+                        ]
                     }
                 ]
             },
             {
                 name: 'Decorations',
                 open: false,
-                buildProps: ['background-color', 'border-radius', 'border', 'box-shadow', 'opacity'],
+                buildProps: ['background-color', 'border-radius', 'border', 'box-shadow', 'opacity', 'cursor'],
                 properties: [
                     {
                         property: 'background-color',
@@ -192,6 +220,26 @@ const editor = grapesjs.init({
                         property: 'border-color',
                         type: 'color',
                         defaults: '#000000'
+                    },
+                    {
+                        property: 'border-radius',
+                        type: 'composite',
+                        properties: [
+                            { property: 'border-top-left-radius', name: 'Top Left', units: ['px', '%'] },
+                            { property: 'border-top-right-radius', name: 'Top Right', units: ['px', '%'] },
+                            { property: 'border-bottom-right-radius', name: 'Bottom Right', units: ['px', '%'] },
+                            { property: 'border-bottom-left-radius', name: 'Bottom Left', units: ['px', '%'] }
+                        ]
+                    },
+                    {
+                        property: 'cursor',
+                        type: 'select',
+                        defaults: 'auto',
+                        options: [
+                            { value: 'auto', name: 'Auto' },
+                            { value: 'pointer', name: 'Pointer' },
+                            { value: 'default', name: 'Default' }
+                        ]
                     }
                 ]
             }
@@ -482,6 +530,134 @@ editor.on('component:selected', () => {
     if (selectedComponent) {
         selectedComponent.set('editable', true);
     }
+});
+
+// Register custom button component
+editor.DomComponents.addType('custom-button', {
+    isComponent: el => {
+        return el.tagName === 'BUTTON';
+    },
+    extend: 'text',
+    model: {
+        defaults: {
+            tagName: 'button',
+            name: 'Button',
+            draggable: true,
+            droppable: false,
+            highlightable: true,
+            selectable: true,
+            layerable: true,
+            editable: true,
+            stylable: true,
+            // Default button style
+            style: {
+                'display': 'inline-block',
+                'padding': '10px 20px',
+                'background-color': '#4CAF50',
+                'color': 'white',
+                'border': 'none',
+                'border-radius': '8px',
+                'cursor': 'pointer',
+                'font-size': '16px',
+                'text-align': 'center'
+            },
+            content: 'Click me',
+        },
+        init() {
+            // This will be called once the model is created
+            this.listenTo(this, 'change:attributes:id', this.handleIdChange);
+            
+            // Initialize with proper styling capabilities
+            this.get('stylable') && (
+                // Make sure these properties are always stylable
+                this.set('stylable', [
+                    // Dimension properties
+                    'width', 'height', 'min-width', 'min-height',
+                    'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+                    'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+                    // Typography properties
+                    'color', 'font-size', 'font-weight', 'font-family', 'text-align', 'text-shadow',
+                    'letter-spacing', 'line-height', 'text-transform',
+                    // Decoration properties
+                    'background-color', 'border', 'border-width', 'border-style', 'border-color',
+                    'border-radius', 'box-shadow', 'opacity', 'cursor'
+                ])
+            );
+        },
+        handleIdChange() {
+            // Do something when ID attribute changes
+            console.log('Button ID changed');
+        }
+    },
+    view: {
+        events: {
+            'dblclick': 'onDblClick'
+        },
+        onDblClick(e) {
+            const em = this.model.em;
+            if (em) {
+                em.get('Commands').run('edit', { target: this.model });
+            }
+        },
+        init() {
+            // Listen for style changes on the model
+            this.listenTo(this.model, 'change:style', this.updateStyle);
+        },
+        updateStyle() {
+            console.log('Button style updated');
+        }
+    }
+});
+
+// Register button component by properly extending the text component
+editor.DomComponents.addType('button', {
+    extend: 'text',
+    isComponent: function(el) {
+        if (el.tagName === 'BUTTON') {
+            return { type: 'button' };
+        }
+    },
+    model: {
+        defaults: {
+            tagName: 'button',
+            droppable: false,
+            attributes: {},
+            traits: [],
+            style: {
+                'display': 'inline-block',
+                'padding': '10px 20px',
+                'background-color': '#4CAF50',
+                'color': 'white',
+                'border': 'none',
+                'border-radius': '8px',
+                'cursor': 'pointer',
+                'font-size': '16px',
+                'text-align': 'center'
+            }
+        }
+    },
+    view: {
+        // Use the standard text editing from the parent text component
+        // No overrides needed - will automatically use the text component's behavior
+    }
+});
+
+// Make sure the style manager and all other systems can interact with our component 
+editor.on('component:selected', function(component) {
+    if (component) {
+        // Enable all style properties
+        component.set('stylable', true);
+        
+        // Enable text editing when appropriate
+        if (component.get('type') === 'button') {
+            component.set('editable', true);
+        }
+    }
+});
+
+// Debug tool for style panel
+editor.on('styleManager:update', function(sectors) {
+    console.log('Style manager updated with sectors:', sectors);
 });
 
 // Enable drag and drop
