@@ -325,10 +325,118 @@
         .gjs-block[data-block-id="image-with-text"]::before {
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' d='M0 0h24v24H0z'/%3E%3Cpath d='M4 5h7a4 4 0 1 1 0 8H4V5zm0 10h16v4H4v-4zm7-5a2 2 0 1 0 0-4H6v4h5z' fill='%23626262'/%3E%3C/svg%3E");
         }
+        
+        /* Custom Button Styles */
+        .custom-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            text-align: center;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+        
+        .custom-button:hover {
+            background-color: #45a049;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            transform: translateY(-2px);
+        }
+        
+        .custom-button:active {
+            background-color: #3e8e41;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            transform: translateY(0);
+        }
+        
+        /* Image with Text styles */
+        .image-container {
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .image-caption {
+            width: 100%;
+            padding: 8px;
+            font-size: 14px;
+            color: #6c757d;
+            text-align: center;
+            font-style: italic;
+        }
+        /* File Explorer Panel */
+        .file-explorer-container {
+            width: 200px;
+            min-width: 200px;
+            display: none;
+            height: 100%;
+            position: relative;
+            background: #f5f5f5;
+            overflow-y: auto;
+            border-right: 1px solid #ddd;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        .file-explorer-header {
+            background-color: #e9ecef;
+            padding: 10px;
+            font-weight: bold;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .directory {
+            font-weight: 500;
+        }
+        
+        .directory:hover {
+            background-color: #e9ecef;
+        }
+        
+        /* Missing resource indicator */
+        [data-missing="true"] {
+            outline: 2px dashed #dc3545 !important;
+            position: relative;
+        }
+        
+        [data-missing="true"]::after {
+            content: "⚠️ Missing";
+            position: absolute;
+            top: 0;
+            right: 0;
+            background-color: #dc3545;
+            color: white;
+            font-size: 10px;
+            padding: 2px 5px;
+            border-radius: 0 0 0 4px;
+        }
+        
+        /* Toggle button for files panel */
+        .btn-toggle-files {
+            background-color: #17a2b8 !important;
+        }
+        
+        .btn-toggle-files:hover {
+            background-color: #138496 !important;
+        }
     </style>
 </head>
 <body>
     <div class="editor-row">
+        <div class="file-explorer-container">
+            <div class="file-explorer-header">
+                <span>Files</span>
+            </div>
+            <!-- File tree will be rendered here -->
+        </div>
         <div id="blocks"></div>
         <div class="editor-canvas">
             <div class="panel__top">

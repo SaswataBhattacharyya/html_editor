@@ -298,10 +298,29 @@ editor.Panels.addPanel({
         {
             id: 'load-html',
             className: 'btn-load',
-            label: '�� Load',
+            label: '📂 Load',
             command: 'load-html'
+        },
+        {
+            id: 'toggle-files',
+            className: 'btn-toggle-files',
+            label: '📁 Files',
+            command: 'toggle-file-explorer'
         }
     ]
+});
+
+// Add a file explorer panel
+editor.Panels.addPanel({
+    id: 'file-explorer',
+    el: '.file-explorer-container',
+    resizable: {
+        tc: false,
+        cr: false,
+        cl: false,
+        bc: false,
+    },
+    buttons: []
 });
 
 // Custom color picker implementation
@@ -809,52 +828,852 @@ editor.Commands.add('save-template', {
     }
 });
 
-// Add load HTML command
-editor.Commands.add('load-html', {
-    run: function(editor, sender) {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.html';
-        input.style.display = 'none';
+// Virtual File System implementation
+class VirtualFileSystem {
+    constructor() {
+        this.files = {};
+        this.mainHtmlFile = null;
+        this.displayImages = {};  // Store blob URLs for images
+    }
+
+    // Add a file to the system
+    addFile(path, content, type) {
+        this.files[path] = {
+            content: content,
+            type: type || this.getFileType(path)
+        };
         
-        input.addEventListener('change', function() {
-            const file = this.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const content = e.target.result;
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(content, 'text/html');
+        // If it's an HTML file and we don't have a main HTML file yet, set it as main
+        if (path.toLowerCase().endsWith('.html') && !this.mainHtmlFile) {
+            this.mainHtmlFile = path;
+        }
+        
+        // Create blob URLs for images to display them
+        if (this.isImageFile(path)) {
+            const blob = new Blob([content], { type: this.getMimeType(path) });
+            this.displayImages[path] = URL.createObjectURL(blob);
+        }
+        
+        return this;
+    }
+
+    // Get a file from the system
+    getFile(path) {
+        return this.files[path];
+    }
+
+    // Get all file paths
+    getAllPaths() {
+        return Object.keys(this.files);
+    }
+
+    // Get main HTML file
+    getMainHtmlFile() {
+        return this.mainHtmlFile;
+    }
+
+    // Set main HTML file
+    setMainHtmlFile(path) {
+        if (this.files[path] && path.toLowerCase().endsWith('.html')) {
+            this.mainHtmlFile = path;
+        }
+    }
+
+    // Get the type of file based on extension
+    getFileType(path) {
+        const extension = path.split('.').pop().toLowerCase();
+        
+        if (['html', 'htm'].includes(extension)) return 'html';
+        if (['css'].includes(extension)) return 'css';
+        if (['js'].includes(extension)) return 'javascript';
+        if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(extension)) return 'image';
+        if (['json'].includes(extension)) return 'json';
+        
+        return 'unknown';
+    }
+
+    // Check if file is an image
+    isImageFile(path) {
+        const type = this.getFileType(path);
+        return type === 'image';
+    }
+
+    // Get MIME type for a file
+    getMimeType(path) {
+        const extension = path.split('.').pop().toLowerCase();
+        
+        const mimeTypes = {
+            'html': 'text/html',
+            'htm': 'text/html',
+            'css': 'text/css',
+            'js': 'text/javascript',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'svg': 'image/svg+xml',
+            'webp': 'image/webp',
+            'json': 'application/json'
+        };
+        
+        return mimeTypes[extension] || 'application/octet-stream';
+    }
+
+    // Resolve a relative path
+    resolvePath(basePath, relativePath) {
+        // If it's an absolute path, return as is
+        if (relativePath.startsWith('/')) {
+            return relativePath.slice(1); // Remove the leading slash
+        }
+        
+        // Extract the directory from the base path
+        const baseDir = basePath.split('/').slice(0, -1).join('/');
+        
+        // Handle '..' in the path
+        const parts = relativePath.split('/');
+        const newParts = [];
+        
+        for (const part of parts) {
+            if (part === '..') {
+                newParts.pop();
+            } else if (part !== '.' && part !== '') {
+                newParts.push(part);
+            }
+        }
+        
+        // If there's a base directory, join it with the new path
+        if (baseDir) {
+            return baseDir + '/' + newParts.join('/');
+        }
+        
+        return newParts.join('/');
+    }
+
+    // Process HTML to replace references to external resources
+    processHtml(html, basePath) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        
+        // Process CSS links
+        doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+            const href = link.getAttribute('href');
+            if (!href) return;
+            
+            const resolvedPath = this.resolvePath(basePath, href);
+            const cssFile = this.getFile(resolvedPath);
+            
+            if (cssFile) {
+                // Replace with an inline style element
+                const style = doc.createElement('style');
+                style.textContent = cssFile.content;
+                style.setAttribute('data-original-href', href);
+                link.parentNode.replaceChild(style, link);
+            } else {
+                console.warn(`CSS file not found: ${resolvedPath}`);
+                link.setAttribute('data-missing', 'true');
+            }
+        });
+        
+        // Process images
+        doc.querySelectorAll('img').forEach(img => {
+            const src = img.getAttribute('src');
+            if (!src || src.startsWith('data:')) return; // Skip data URLs
+            
+            const resolvedPath = this.resolvePath(basePath, src);
+            const imgFile = this.getFile(resolvedPath);
+            
+            if (imgFile) {
+                if (this.displayImages[resolvedPath]) {
+                    img.setAttribute('src', this.displayImages[resolvedPath]);
+                    img.setAttribute('data-original-src', src);
+                }
+            } else {
+                console.warn(`Image file not found: ${resolvedPath}`);
+                img.setAttribute('data-missing', 'true');
+                img.setAttribute('src', `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23f8f9fa'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='12' fill='%23495057'%3EMissing Image%3C/text%3E%3Ctext x='50%25' y='70%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='10' fill='%23495057'%3E${encodeURIComponent(src)}%3C/text%3E%3C/svg%3E`);
+            }
+        });
+        
+        // Process scripts
+        doc.querySelectorAll('script[src]').forEach(script => {
+            const src = script.getAttribute('src');
+            if (!src) return;
+            
+            const resolvedPath = this.resolvePath(basePath, src);
+            const jsFile = this.getFile(resolvedPath);
+            
+            if (jsFile) {
+                // Replace with an inline script
+                const newScript = doc.createElement('script');
+                newScript.textContent = jsFile.content;
+                newScript.setAttribute('data-original-src', src);
+                script.parentNode.replaceChild(newScript, script);
+            } else {
+                console.warn(`JavaScript file not found: ${resolvedPath}`);
+                script.setAttribute('data-missing', 'true');
+            }
+        });
+        
+        return {
+            body: doc.body.innerHTML,
+            styles: Array.from(doc.querySelectorAll('style')).map(style => style.textContent).join('\n')
+        };
+    }
+
+    // Update the file explorer UI
+    updateFileExplorer(container) {
+        if (!container) return;
+        
+        // Clear the container
+        container.innerHTML = '';
+        
+        // Create a file list
+        const fileList = document.createElement('ul');
+        fileList.className = 'file-list';
+        fileList.style.listStyle = 'none';
+        fileList.style.padding = '10px';
+        fileList.style.margin = '0';
+
+        // Group files by directory
+        const directories = {};
+        
+        this.getAllPaths().forEach(path => {
+            const parts = path.split('/');
+            let currentDir = directories;
+            
+            // Build directory tree
+            for (let i = 0; i < parts.length - 1; i++) {
+                const dir = parts[i];
+                if (!currentDir[dir]) {
+                    currentDir[dir] = {};
+                }
+                currentDir = currentDir[dir];
+            }
+            
+            // Add file to its directory
+            const fileName = parts[parts.length - 1];
+            if (!currentDir._files) {
+                currentDir._files = [];
+            }
+            currentDir._files.push({
+                name: fileName,
+                path: path,
+                type: this.getFileType(path),
+                isMain: path === this.mainHtmlFile
+            });
+        });
+        
+        // Recursively create directory elements
+        const buildDirectoryElement = (dir, name, path = '', level = 0) => {
+            const dirItem = document.createElement('li');
+            dirItem.style.marginLeft = level > 0 ? '15px' : '0';
+            
+            const dirHeader = document.createElement('div');
+            dirHeader.className = 'directory';
+            dirHeader.style.padding = '5px';
+            dirHeader.style.marginBottom = '5px';
+            dirHeader.style.cursor = 'pointer';
+            dirHeader.style.display = 'flex';
+            dirHeader.style.alignItems = 'center';
+            dirHeader.innerHTML = `
+                <span style="margin-right: 5px;">📁</span>
+                <span>${name || 'Root'}</span>
+            `;
+            
+            const dirContent = document.createElement('ul');
+            dirContent.style.listStyle = 'none';
+            dirContent.style.paddingLeft = '0';
+            dirContent.style.display = level > 0 ? 'none' : 'block';
+            
+            dirHeader.addEventListener('click', () => {
+                dirContent.style.display = dirContent.style.display === 'none' ? 'block' : 'none';
+            });
+            
+            dirItem.appendChild(dirHeader);
+            dirItem.appendChild(dirContent);
+            
+            // Add files in this directory
+            if (dir._files) {
+                dir._files.forEach(file => {
+                    const fileItem = document.createElement('li');
+                    fileItem.style.padding = '5px';
+                    fileItem.style.marginLeft = '15px';
+                    fileItem.style.display = 'flex';
+                    fileItem.style.alignItems = 'center';
                     
-                    // Extract HTML content from the body
-                    const bodyContent = doc.body.innerHTML;
+                    let icon = '📄';
+                    if (file.type === 'html') icon = '🌐';
+                    if (file.type === 'css') icon = '🎨';
+                    if (file.type === 'javascript') icon = '📜';
+                    if (file.type === 'image') icon = '🖼️';
                     
-                    // Extract CSS from style tags
-                    let css = '';
-                    doc.querySelectorAll('style').forEach(style => {
-                        css += style.textContent + '\n';
-                    });
+                    // Add 'main' indicator for the main HTML file
+                    const mainIndicator = file.isMain ? ' <span style="color: #28a745; font-weight: bold;">[Main]</span>' : '';
                     
-                    // Load the content into the editor
-                    editor.setComponents(bodyContent);
-                    if (css) {
-                        editor.setStyle(css);
+                    fileItem.innerHTML = `
+                        <span style="margin-right: 5px;">${icon}</span>
+                        <span>${file.name}${mainIndicator}</span>
+                    `;
+                    
+                    // Add click event for HTML files to set as main
+                    if (file.type === 'html' && !file.isMain) {
+                        fileItem.style.cursor = 'pointer';
+                        fileItem.setAttribute('title', 'Click to set as main HTML file');
+                        fileItem.addEventListener('click', () => {
+                            this.setMainHtmlFile(file.path);
+                            this.updateFileExplorer(container);
+                            
+                            // Notify user
+                            const notification = document.createElement('div');
+                            notification.style.position = 'fixed';
+                            notification.style.top = '10px';
+                            notification.style.left = '50%';
+                            notification.style.transform = 'translateX(-50%)';
+                            notification.style.background = '#28a745';
+                            notification.style.color = '#fff';
+                            notification.style.padding = '10px 15px';
+                            notification.style.borderRadius = '4px';
+                            notification.style.zIndex = '10000';
+                            notification.textContent = `Set ${file.name} as main HTML file`;
+                            
+                            document.body.appendChild(notification);
+                            setTimeout(() => notification.remove(), 2000);
+                        });
                     }
                     
-                    editor.Modal.setTitle('Load Successful')
-                        .setContent('HTML file loaded successfully!')
+                    dirContent.appendChild(fileItem);
+                });
+            }
+            
+            // Add subdirectories
+            Object.keys(dir).forEach(subDirName => {
+                if (subDirName === '_files') return; // Skip the files array
+                
+                const subDirPath = path ? `${path}/${subDirName}` : subDirName;
+                const subDirElement = buildDirectoryElement(dir[subDirName], subDirName, subDirPath, level + 1);
+                dirContent.appendChild(subDirElement);
+            });
+            
+            return dirItem;
+        };
+        
+        const rootElement = buildDirectoryElement(directories, '', '', 0);
+        fileList.appendChild(rootElement);
+        container.appendChild(fileList);
+    }
+}
+
+// Create a global instance of the VFS
+window.vfs = new VirtualFileSystem();
+
+// Add load multi-file HTML command
+editor.Commands.add('load-html', {
+    run: function(editor, sender) {
+        // Show options for loading: single HTML file or multiple files
+        editor.Modal.setTitle('Load Files')
+            .setContent(`
+                <div style="padding: 20px;">
+                    <h3 style="margin-top: 0; margin-bottom: 15px;">Select files to load</h3>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Upload options:</label>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button id="load-html-only" style="padding: 10px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; flex: 1;">
+                                <div style="font-size: 24px; margin-bottom: 5px;">📄</div>
+                                Single HTML file
+                            </button>
+                            <button id="load-multiple-files" style="padding: 10px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; flex: 1;">
+                                <div style="font-size: 24px; margin-bottom: 5px;">📂</div>
+                                Multiple files
+                            </button>
+                            <button id="load-zip" style="padding: 10px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; flex: 1;">
+                                <div style="font-size: 24px; margin-bottom: 5px;">📦</div>
+                                Zip archive
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div style="font-size: 13px; color: #6c757d;">
+                        <p><strong>Single HTML file</strong>: Load a single HTML file with embedded CSS and images.</p>
+                        <p><strong>Multiple files</strong>: Select HTML, CSS, JS, and image files to load together.</p>
+                        <p><strong>Zip archive</strong>: Upload a ZIP file containing an entire website project.</p>
+                    </div>
+                </div>
+            `)
+            .open();
+        
+        // Handle button clicks
+        const modal = editor.Modal.getContentEl();
+        
+        // Single HTML file
+        const htmlOnlyBtn = modal.querySelector('#load-html-only');
+        htmlOnlyBtn.addEventListener('click', () => {
+            editor.Modal.close();
+            loadSingleHtmlFile(editor);
+        });
+        
+        // Multiple files
+        const multipleFilesBtn = modal.querySelector('#load-multiple-files');
+        multipleFilesBtn.addEventListener('click', () => {
+            editor.Modal.close();
+            loadMultipleFiles(editor);
+        });
+        
+        // Zip archive
+        const zipBtn = modal.querySelector('#load-zip');
+        zipBtn.addEventListener('click', () => {
+            editor.Modal.close();
+            loadZipArchive(editor);
+        });
+    }
+});
+
+// Function to load a single HTML file
+function loadSingleHtmlFile(editor) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.html,.htm';
+    input.style.display = 'none';
+    
+    input.addEventListener('change', function() {
+        const file = this.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const content = e.target.result;
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(content, 'text/html');
+                
+                // Extract HTML content from the body
+                const bodyContent = doc.body.innerHTML;
+                
+                // Extract CSS from style tags
+                let css = '';
+                doc.querySelectorAll('style').forEach(style => {
+                    css += style.textContent + '\n';
+                });
+                
+                // Clear previous files in the VFS
+                window.vfs = new VirtualFileSystem();
+                
+                // Add the file to VFS
+                window.vfs.addFile(file.name, content, 'html');
+                
+                // Load the content into the editor
+                editor.setComponents(bodyContent);
+                if (css) {
+                    editor.setStyle(css);
+                }
+                
+                // Update file explorer
+                const fileExplorer = document.querySelector('.file-explorer-container');
+                if (fileExplorer) {
+                    window.vfs.updateFileExplorer(fileExplorer);
+                }
+                
+                editor.Modal.setTitle('Load Successful')
+                    .setContent(`<div style="padding: 20px; text-align: center;">
+                        <p>HTML file <strong>${file.name}</strong> loaded successfully!</p>
+                    </div>`)
+                    .open();
+                
+                setTimeout(() => {
+                    editor.Modal.close();
+                }, 2000);
+            };
+            reader.readAsText(file);
+        }
+    });
+    
+    document.body.appendChild(input);
+    input.click();
+    document.body.removeChild(input);
+}
+
+// Function to load multiple files
+function loadMultipleFiles(editor) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.html,.htm,.css,.js,.jpg,.jpeg,.png,.gif,.svg,.webp';
+    input.multiple = true;
+    input.style.display = 'none';
+    
+    input.addEventListener('change', function() {
+        const files = Array.from(this.files);
+        if (files.length === 0) return;
+        
+        // Show loading indicator
+        editor.Modal.setTitle('Loading Files')
+            .setContent(`
+                <div style="padding: 20px; text-align: center;">
+                    <p>Loading ${files.length} files...</p>
+                    <div style="width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 10px; margin-top: 15px; overflow: hidden;">
+                        <div id="load-progress" style="width: 0%; height: 100%; background-color: #4CAF50; transition: width 0.3s;"></div>
+                    </div>
+                </div>
+            `)
+            .open();
+        
+        // Reset the VFS
+        window.vfs = new VirtualFileSystem();
+        
+        // Process each file
+        let loadedCount = 0;
+        const htmlFiles = [];
+        
+        const processNextFile = (index) => {
+            if (index >= files.length) {
+                // All files loaded, process the main HTML file
+                finishLoading();
+                return;
+            }
+            
+            const file = files[index];
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                const content = e.target.result;
+                
+                // For text files, store as string
+                if (file.type.startsWith('text/') || 
+                    file.type === 'application/javascript' || 
+                    file.name.endsWith('.html') || 
+                    file.name.endsWith('.htm') || 
+                    file.name.endsWith('.css') || 
+                    file.name.endsWith('.js')) {
+                    
+                    window.vfs.addFile(file.name, content);
+                    
+                    if (file.name.endsWith('.html') || file.name.endsWith('.htm')) {
+                        htmlFiles.push(file.name);
+                    }
+                } else {
+                    // For binary files like images, store as ArrayBuffer
+                    window.vfs.addFile(file.name, new Uint8Array(e.target.result));
+                }
+                
+                // Update progress
+                loadedCount++;
+                const progressBar = document.getElementById('load-progress');
+                if (progressBar) {
+                    progressBar.style.width = `${(loadedCount / files.length) * 100}%`;
+                }
+                
+                // Process next file
+                processNextFile(index + 1);
+            };
+            
+            reader.onerror = function() {
+                console.error(`Error reading file: ${file.name}`);
+                processNextFile(index + 1);
+            };
+            
+            // Read file based on type
+            if (file.type.startsWith('text/') || 
+                file.type === 'application/javascript' || 
+                file.name.endsWith('.html') || 
+                file.name.endsWith('.htm') || 
+                file.name.endsWith('.css') || 
+                file.name.endsWith('.js')) {
+                reader.readAsText(file);
+            } else {
+                reader.readAsArrayBuffer(file);
+            }
+        };
+        
+        const finishLoading = () => {
+            // Update file explorer
+            const fileExplorer = document.querySelector('.file-explorer-container');
+            if (fileExplorer) {
+                window.vfs.updateFileExplorer(fileExplorer);
+            }
+            
+            // If no HTML files found, show warning
+            if (htmlFiles.length === 0) {
+                editor.Modal.setTitle('Loading Complete')
+                    .setContent(`
+                        <div style="padding: 20px; text-align: center;">
+                            <p style="color: #dc3545; margin-bottom: 15px;"><strong>Warning:</strong> No HTML files were found in the uploaded files.</p>
+                            <p>Please upload at least one HTML file to edit.</p>
+                        </div>
+                    `)
+                    .open();
+                return;
+            }
+            
+            // Get the main HTML file
+            const mainHtmlFile = window.vfs.getMainHtmlFile();
+            if (mainHtmlFile) {
+                const htmlFile = window.vfs.getFile(mainHtmlFile);
+                if (htmlFile) {
+                    const processedHtml = window.vfs.processHtml(htmlFile.content, mainHtmlFile);
+                    
+                    // Load content into editor
+                    editor.setComponents(processedHtml.body);
+                    editor.setStyle(processedHtml.styles);
+                    
+                    // Show success message
+                    editor.Modal.setTitle('Loading Complete')
+                        .setContent(`
+                            <div style="padding: 20px; text-align: center;">
+                                <p>Successfully loaded ${files.length} files.</p>
+                                <p>Main HTML file: <strong>${mainHtmlFile}</strong></p>
+                                <p style="margin-top: 15px; font-size: 13px; color: #6c757d;">You can change the main HTML file in the Files panel.</p>
+                            </div>
+                        `)
                         .open();
                     
                     setTimeout(() => {
                         editor.Modal.close();
-                    }, 2000);
-                };
-                reader.readAsText(file);
+                    }, 3000);
+                }
             }
+        };
+        
+        // Start processing files
+        processNextFile(0);
+    });
+    
+    document.body.appendChild(input);
+    input.click();
+    document.body.removeChild(input);
+}
+
+// Function to load a zip archive
+function loadZipArchive(editor) {
+    // Check if JSZip is available, if not load it dynamically
+    if (!window.JSZip) {
+        // Show loading indicator
+        editor.Modal.setTitle('Loading JSZip')
+            .setContent(`
+                <div style="padding: 20px; text-align: center;">
+                    <p>Loading JSZip library...</p>
+                    <div style="width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 10px; margin-top: 15px; overflow: hidden;">
+                        <div style="width: 50%; height: 100%; background-color: #4CAF50;"></div>
+                    </div>
+                </div>
+            `)
+            .open();
+        
+        // Load JSZip from CDN
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        script.onload = function() {
+            editor.Modal.close();
+            continueWithZipLoad();
+        };
+        script.onerror = function() {
+            editor.Modal.setTitle('Error')
+                .setContent(`
+                    <div style="padding: 20px; text-align: center;">
+                        <p style="color: #dc3545;">Failed to load JSZip library.</p>
+                        <p>Please try again or use the multiple files option instead.</p>
+                    </div>
+                `)
+                .open();
+        };
+        document.head.appendChild(script);
+    } else {
+        continueWithZipLoad();
+    }
+    
+    function continueWithZipLoad() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.zip';
+        input.style.display = 'none';
+        
+        input.addEventListener('change', function() {
+            const file = this.files[0];
+            if (!file) return;
+            
+            // Show loading indicator
+            editor.Modal.setTitle('Loading Zip Archive')
+                .setContent(`
+                    <div style="padding: 20px; text-align: center;">
+                        <p>Extracting files from ${file.name}...</p>
+                        <div style="width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 10px; margin-top: 15px; overflow: hidden;">
+                            <div id="zip-progress" style="width: 0%; height: 100%; background-color: #4CAF50; transition: width 0.3s;"></div>
+                        </div>
+                    </div>
+                `)
+                .open();
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const zip = new JSZip();
+                
+                zip.loadAsync(e.target.result)
+                    .then(function(zipContents) {
+                        // Reset the VFS
+                        window.vfs = new VirtualFileSystem();
+                        
+                        // Get total number of files
+                        const totalFiles = Object.keys(zipContents.files).length;
+                        let processedFiles = 0;
+                        const htmlFiles = [];
+                        
+                        // Process each file in the zip
+                        const zipFilePromises = [];
+                        
+                        zipContents.forEach(function(relativePath, zipEntry) {
+                            // Skip directories
+                            if (zipEntry.dir) {
+                                processedFiles++;
+                                return;
+                            }
+                            
+                            // Process file based on its extension
+                            const fileName = zipEntry.name;
+                            const fileType = window.vfs.getFileType(fileName);
+                            
+                            let filePromise;
+                            
+                            if (fileType === 'html' || fileType === 'css' || fileType === 'javascript' || fileType === 'json') {
+                                // Text files
+                                filePromise = zipEntry.async('string').then(function(content) {
+                                    window.vfs.addFile(fileName, content);
+                                    
+                                    if (fileType === 'html') {
+                                        htmlFiles.push(fileName);
+                                    }
+                                    
+                                    // Update progress
+                                    processedFiles++;
+                                    const progressBar = document.getElementById('zip-progress');
+                                    if (progressBar) {
+                                        progressBar.style.width = `${(processedFiles / totalFiles) * 100}%`;
+                                    }
+                                });
+                            } else {
+                                // Binary files (like images)
+                                filePromise = zipEntry.async('uint8array').then(function(content) {
+                                    window.vfs.addFile(fileName, content);
+                                    
+                                    // Update progress
+                                    processedFiles++;
+                                    const progressBar = document.getElementById('zip-progress');
+                                    if (progressBar) {
+                                        progressBar.style.width = `${(processedFiles / totalFiles) * 100}%`;
+                                    }
+                                });
+                            }
+                            
+                            zipFilePromises.push(filePromise);
+                        });
+                        
+                        // After all files are processed
+                        Promise.all(zipFilePromises).then(function() {
+                            // Update file explorer
+                            const fileExplorer = document.querySelector('.file-explorer-container');
+                            if (fileExplorer) {
+                                window.vfs.updateFileExplorer(fileExplorer);
+                            }
+                            
+                            // If no HTML files found, show warning
+                            if (htmlFiles.length === 0) {
+                                editor.Modal.setTitle('Loading Complete')
+                                    .setContent(`
+                                        <div style="padding: 20px; text-align: center;">
+                                            <p style="color: #dc3545; margin-bottom: 15px;"><strong>Warning:</strong> No HTML files were found in the ZIP archive.</p>
+                                            <p>Please upload a ZIP file containing at least one HTML file to edit.</p>
+                                        </div>
+                                    `)
+                                    .open();
+                                return;
+                            }
+                            
+                            // Look for common main HTML files
+                            const commonMainFiles = ['index.html', 'main.html', 'default.html', 'home.html'];
+                            let mainFileFound = false;
+                            
+                            for (const commonFile of commonMainFiles) {
+                                // Look for the common file in any directory
+                                for (const htmlFile of htmlFiles) {
+                                    if (htmlFile.endsWith(`/${commonFile}`) || htmlFile === commonFile) {
+                                        window.vfs.setMainHtmlFile(htmlFile);
+                                        mainFileFound = true;
+                                        break;
+                                    }
+                                }
+                                if (mainFileFound) break;
+                            }
+                            
+                            // If no common main file, use the first HTML file
+                            if (!mainFileFound && htmlFiles.length > 0) {
+                                window.vfs.setMainHtmlFile(htmlFiles[0]);
+                            }
+                            
+                            // Load the main HTML file into the editor
+                            const mainHtmlFile = window.vfs.getMainHtmlFile();
+                            if (mainHtmlFile) {
+                                const htmlFile = window.vfs.getFile(mainHtmlFile);
+                                if (htmlFile) {
+                                    const processedHtml = window.vfs.processHtml(htmlFile.content, mainHtmlFile);
+                                    
+                                    // Load content into editor
+                                    editor.setComponents(processedHtml.body);
+                                    editor.setStyle(processedHtml.styles);
+                                    
+                                    // Show success message
+                                    editor.Modal.setTitle('Loading Complete')
+                                        .setContent(`
+                                            <div style="padding: 20px; text-align: center;">
+                                                <p>Successfully extracted ${processedFiles} files from ZIP archive.</p>
+                                                <p>Main HTML file: <strong>${mainHtmlFile}</strong></p>
+                                                <p style="margin-top: 15px; font-size: 13px; color: #6c757d;">You can change the main HTML file in the Files panel.</p>
+                                            </div>
+                                        `)
+                                        .open();
+                                    
+                                    setTimeout(() => {
+                                        editor.Modal.close();
+                                    }, 3000);
+                                }
+                            }
+                        }).catch(function(error) {
+                            console.error('Error processing ZIP contents:', error);
+                            editor.Modal.setTitle('Error')
+                                .setContent(`
+                                    <div style="padding: 20px; text-align: center;">
+                                        <p style="color: #dc3545;">Error processing ZIP contents: ${error.message}</p>
+                                    </div>
+                                `)
+                                .open();
+                        });
+                    })
+                    .catch(function(error) {
+                        console.error('Error loading ZIP file:', error);
+                        editor.Modal.setTitle('Error')
+                            .setContent(`
+                                <div style="padding: 20px; text-align: center;">
+                                    <p style="color: #dc3545;">Error loading ZIP file: ${error.message}</p>
+                                </div>
+                            `)
+                            .open();
+                    });
+            };
+            reader.readAsArrayBuffer(file);
         });
         
         document.body.appendChild(input);
         input.click();
         document.body.removeChild(input);
+    }
+}
+
+// Add toggle file explorer command
+editor.Commands.add('toggle-file-explorer', {
+    run: function(editor) {
+        const fileExplorer = document.querySelector('.file-explorer-container');
+        if (fileExplorer) {
+            const currentDisplay = window.getComputedStyle(fileExplorer).display;
+            fileExplorer.style.display = currentDisplay === 'none' ? 'block' : 'none';
+            
+            // Update file explorer when shown
+            if (fileExplorer.style.display !== 'none') {
+                window.vfs.updateFileExplorer(fileExplorer);
+            }
+        }
     }
 }); 
