@@ -714,13 +714,54 @@ editor.Commands.add('save-template', {
         const html = editor.getHtml();
         const css = editor.getCss();
         
-        // Create the full HTML content
-        const fullContent = `<!DOCTYPE html>
+        // Show a custom modal to get the filename
+        editor.Modal.setTitle('Save HTML Page')
+            .setContent(`
+                <div style="padding: 20px;">
+                    <label for="filename" style="display: block; margin-bottom: 10px; font-weight: bold;">Enter filename:</label>
+                    <input 
+                        type="text" 
+                        id="filename" 
+                        value="page.html" 
+                        style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                        <button id="cancel-save" style="padding: 8px 16px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">Cancel</button>
+                        <button id="confirm-save" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Save</button>
+                    </div>
+                </div>
+            `)
+            .open();
+        
+        // Get modal elements
+        const modal = editor.Modal.getContentEl();
+        const filenameInput = modal.querySelector('#filename');
+        const cancelButton = modal.querySelector('#cancel-save');
+        const confirmButton = modal.querySelector('#confirm-save');
+        
+        // Focus the filename input when the modal opens
+        setTimeout(() => filenameInput.focus(), 100);
+
+        // Handle cancel button
+        cancelButton.addEventListener('click', () => {
+            editor.Modal.close();
+        });
+        
+        // Handle save button
+        confirmButton.addEventListener('click', () => {
+            let filename = filenameInput.value.trim();
+            
+            // Add .html extension if missing
+            if (!filename.toLowerCase().endsWith('.html')) {
+                filename += '.html';
+            }
+            
+            // Create the full HTML content
+            const fullContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Saved Page</title>
+    <title>${filename}</title>
     <style>
         ${css}
     </style>
@@ -730,42 +771,41 @@ editor.Commands.add('save-template', {
     ${html}
 </body>
 </html>`;
-
-        // Create a temporary input element for the file picker
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.html';
-        input.webkitdirectory = true;
-        input.style.display = 'none';
-        
-        input.addEventListener('change', function() {
-            const file = this.files[0];
-            if (file) {
-                const blob = new Blob([fullContent], { type: 'text/html' });
-                const url = window.URL.createObjectURL(blob);
-                
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = file.name;
-                document.body.appendChild(a);
-                a.click();
-                
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-                
-                editor.Modal.setTitle('Save Successful')
-                    .setContent('Your page has been saved successfully!')
-                    .open();
-                
-                setTimeout(() => {
-                    editor.Modal.close();
-                }, 2000);
-            }
+            
+            // Create a blob and download it
+            const blob = new Blob([fullContent], { type: 'text/html' });
+            const url = window.URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            // Close the filename modal
+            editor.Modal.close();
+            
+            // Show success notification
+            editor.Modal.setTitle('Save Successful')
+                .setContent(`<div style="padding: 20px; text-align: center;">
+                    <p>Your page <strong>${filename}</strong> has been saved successfully!</p>
+                </div>`)
+                .open();
+            
+            setTimeout(() => {
+                editor.Modal.close();
+            }, 2000);
         });
         
-        document.body.appendChild(input);
-        input.click();
-        document.body.removeChild(input);
+        // Allow pressing Enter to save
+        filenameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                confirmButton.click();
+            }
+        });
     }
 });
 
