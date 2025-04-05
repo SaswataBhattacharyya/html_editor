@@ -63,36 +63,95 @@ const editor = grapesjs.init({
     },
     blockManager: {
         appendTo: '#blocks',
+        blockCategories: [
+            { id: 'layout', label: 'Layout', open: true },
+            { id: 'basic', label: 'Basic' }
+        ],
         blocks: [
             {
                 id: 'section',
                 label: 'Section',
-                attributes: { class: 'gjs-block-section' },
-                content: `
-                    <section class="py-8 px-4">
-                        <div class="container mx-auto">
-                            <h2 class="text-4xl font-bold mb-4">Title</h2>
-                            <p class="text-gray-600">Content goes here</p>
-                        </div>
-                    </section>
-                `,
+                attributes: { class:'gjs-block-section' },
+                content: `<section>
+                    <h1>This is a simple title</h1>
+                    <p>This is just a Lorem text: Lorem ipsum dolor sit amet</p>
+                </section>`,
+                category: 'basic',
+            },
+            {
+                id: 'flex-row',
+                label: 'Flex Row',
+                attributes: { class:'gjs-block-section' },
+                content: `<div style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; padding: 10px; min-height: 100px; background-color: #f8f9fa; border: 1px dashed #dee2e6;">
+                    <div style="flex: 1; padding: 10px; min-height: 50px; background-color: #e9ecef; border: 1px dashed #ced4da;">Column 1</div>
+                    <div style="flex: 1; padding: 10px; min-height: 50px; background-color: #e9ecef; border: 1px dashed #ced4da;">Column 2</div>
+                </div>`,
+                category: 'Layout',
+            },
+            {
+                id: 'flex-column',
+                label: 'Column',
+                attributes: { class:'gjs-block-section' },
+                content: `<div style="flex: 1; padding: 10px; min-height: 50px; background-color: #e9ecef; border: 1px dashed #ced4da;">
+                    <p>Column content</p>
+                </div>`,
+                category: 'Layout',
+            },
+            {
+                id: 'two-columns',
+                label: '2 Columns',
+                attributes: { class:'gjs-block-section' },
+                content: `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 10px; min-height: 100px; background-color: #f8f9fa; border: 1px dashed #dee2e6;">
+                    <div style="padding: 10px; min-height: 50px; background-color: #e9ecef; border: 1px dashed #ced4da;">Column 1</div>
+                    <div style="padding: 10px; min-height: 50px; background-color: #e9ecef; border: 1px dashed #ced4da;">Column 2</div>
+                </div>`,
+                category: 'Layout',
+            },
+            {
+                id: 'three-columns',
+                label: '3 Columns',
+                attributes: { class:'gjs-block-section' },
+                content: `<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; padding: 10px; min-height: 100px; background-color: #f8f9fa; border: 1px dashed #dee2e6;">
+                    <div style="padding: 10px; min-height: 50px; background-color: #e9ecef; border: 1px dashed #ced4da;">Column 1</div>
+                    <div style="padding: 10px; min-height: 50px; background-color: #e9ecef; border: 1px dashed #ced4da;">Column 2</div>
+                    <div style="padding: 10px; min-height: 50px; background-color: #e9ecef; border: 1px dashed #ced4da;">Column 3</div>
+                </div>`,
+                category: 'Layout',
             },
             {
                 id: 'text',
                 label: 'Text',
                 content: '<div data-gjs-type="text">Insert your text here</div>',
+                category: 'basic',
             },
             {
                 id: 'image',
                 label: 'Image',
                 select: true,
                 content: { type: 'image' },
-                activate: true
+                activate: true,
+                category: 'basic',
             },
             {
                 id: 'button',
                 label: 'Button',
-                content: '<button class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Click me</button>',
+                content: '<button class="button">Click me</button>',
+                category: 'basic',
+            },
+            {
+                id: 'image-with-text',
+                label: 'Image + Text',
+                attributes: { class:'gjs-block-section' },
+                content: `<div style="display: flex; align-items: center; gap: 20px; padding: 10px; background-color: #f8f9fa; border: 1px dashed #dee2e6;">
+                    <div style="flex: 1;">
+                        <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIiBmaWxsPSIjRThFOEU4Ii8+CjxwYXRoIGQ9Ik01MC41IDQyLjVDNTAuNSA0Ni42NDIxIDQ3LjE0MjEgNTAgNDMgNTBDMzguODU3OSA1MCAzNS41IDQ2LjY0MjEgMzUuNSA0Mi41QzM1LjUgMzguMzU3OSAzOC44NTc5IDM1IDQzIDM1QzQ3LjE0MjEgMzUgNTAuNSAzOC4zNTc5IDUwLjUgNDIuNVoiIGZpbGw9IiM5QTlBOUEiLz4KPHBhdGggZD0iTTc2LjUgNjhDNzYuNSA1Ni40MDIgNjcuMzQ4IDQ3IDU1Ljc1IDQ3SDQ0LjI1QzMyLjY1MiA0NyAyMy41IDU2LjQwMiAyMy41IDY4VjcwSDc2LjVWNjhaIiBmaWxsPSIjOUE5QTlBIi8+Cjwvc3ZnPgo=" style="width:100%; height:auto; max-width:150px;" alt="Placeholder image">
+                    </div>
+                    <div style="flex: 2;">
+                        <h3 style="margin-top:0;">Image with Text</h3>
+                        <p>This is a block with an image next to some text. Drag and drop your own content here.</p>
+                    </div>
+                </div>`,
+                category: 'Layout',
             }
         ]
     },
