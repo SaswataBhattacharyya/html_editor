@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,19 +8,20 @@
     <link rel="stylesheet" href="dist/output.css">
     <script src="node_modules/grapesjs/dist/grapes.min.js"></script>
     <link rel="stylesheet" href="node_modules/grapesjs/dist/css/grapes.min.css">
-    
+    <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js" crossorigin="anonymous"></script>
     <!-- React and React DOM -->
     <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
-    
+
     <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
+
     <style>
-        body { 
+        body {
             margin: 0;
             min-width: 1200px;
         }
+
         .editor-row {
             display: flex;
             justify-content: flex-start;
@@ -27,6 +29,7 @@
             flex-wrap: nowrap;
             height: 100vh;
         }
+
         .editor-canvas {
             flex-grow: 1;
             display: flex;
@@ -34,6 +37,7 @@
             min-width: 600px;
             position: relative;
         }
+
         .panel__right {
             flex-basis: 280px;
             min-width: 280px;
@@ -46,6 +50,7 @@
             flex-direction: column;
             width: 280px;
         }
+
         .panel__top {
             background: #fff;
             padding: 5px 10px;
@@ -57,12 +62,14 @@
             width: 100%;
             box-sizing: border-box;
         }
+
         .panel__basic-actions {
             display: flex;
             gap: 5px;
             padding: 5px;
             position: relative;
         }
+
         .panel__basic-actions button {
             border: none;
             margin-right: 5px;
@@ -73,32 +80,76 @@
             cursor: pointer;
             transition: background-color 0.3s ease;
         }
+
         .panel__basic-actions button:hover {
             background-color: #666;
         }
+
+        .panel__basic-actions button[disabled] {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .fabric-draw-toolbar {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            margin-left: 12px;
+        }
+
+        .fabric-draw-toolbar.active {
+            display: flex;
+        }
+
+        .fabric-draw-toolbar button {
+            border: 1px solid #ccc;
+            background: #fff;
+            color: #333;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .fabric-draw-toolbar button:hover {
+            background-color: #e5e7eb;
+        }
+
+        .fabric-draw-toolbar button.active {
+            background-color: #333;
+            color: #fff;
+        }
+
         .btn-save {
             background-color: #28a745 !important;
         }
+
         .btn-save:hover {
             background-color: #218838 !important;
         }
+
         .btn-load {
             background-color: #007bff !important;
         }
+
         .btn-load:hover {
             background-color: #0056b3 !important;
         }
+
         .panel__switcher {
             display: flex;
             gap: 5px;
             padding: 5px;
         }
+
         .panel__devices {
             margin-left: auto;
             display: flex;
             gap: 5px;
             padding: 5px;
         }
+
         #blocks {
             width: 200px;
             min-width: 200px;
@@ -110,6 +161,7 @@
             padding: 10px;
             box-sizing: border-box;
         }
+
         .gjs-block {
             width: calc(100% - 10px);
             height: auto;
@@ -124,35 +176,43 @@
             box-sizing: border-box;
             transition: all 0.2s ease;
         }
-        .gjs-block:hover { 
+
+        .gjs-block:hover {
             color: #d278c9;
             border-color: #d278c9;
             box-shadow: 0 0 3px rgba(210, 120, 201, 0.2);
         }
+
         .gjs-block-label {
             font-size: 12px;
             font-weight: 500;
             display: block;
             padding: 3px;
         }
+
         .gjs-one-bg {
             background-color: #f5f5f5;
         }
+
         .gjs-two-color {
             color: #363636;
         }
+
         .gjs-three-bg {
             background-color: #363636;
             color: white;
         }
+
         #gjs {
             border-top: 1px solid #ddd;
         }
+
         .layers-container {
             padding: 15px;
             border-bottom: 1px solid #ddd;
             flex-shrink: 0;
         }
+
         #styles-container {
             padding: 15px;
             height: auto;
@@ -160,6 +220,7 @@
             width: 100%;
             box-sizing: border-box;
         }
+
         .gjs-sm-sectors {
             height: auto;
             min-height: 100%;
@@ -167,32 +228,39 @@
             flex-direction: column;
             gap: 10px;
         }
+
         .gjs-sm-sector {
             margin-bottom: 10px;
             padding: 5px;
             display: block !important;
         }
+
         .gjs-sm-sector-title {
             padding: 5px;
             font-size: 13px;
             font-weight: 500;
         }
+
         .gjs-sm-properties {
             display: block;
             padding: 10px 5px;
         }
+
         .gjs-sm-property {
             display: block !important;
             margin-bottom: 10px;
             padding: 5px;
         }
+
         .gjs-sm-label {
             font-size: 12px;
         }
+
         .gjs-field {
             width: 100%;
             box-sizing: border-box;
         }
+
         .gjs-field-color-picker {
             width: 30px;
             height: 30px;
@@ -202,6 +270,7 @@
             position: relative;
             overflow: hidden;
         }
+
         .gjs-field-color-picker input[type="color"] {
             position: absolute;
             top: 0;
@@ -211,6 +280,7 @@
             opacity: 0;
             cursor: pointer;
         }
+
         .gjs-checker-bg {
             position: absolute;
             top: 0;
@@ -218,29 +288,34 @@
             width: 100%;
             height: 100%;
             background-image: linear-gradient(45deg, #808080 25%, transparent 25%),
-                            linear-gradient(-45deg, #808080 25%, transparent 25%),
-                            linear-gradient(45deg, transparent 75%, #808080 75%),
-                            linear-gradient(-45deg, transparent 75%, #808080 75%);
+                linear-gradient(-45deg, #808080 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, #808080 75%),
+                linear-gradient(-45deg, transparent 75%, #808080 75%);
             background-size: 10px 10px;
             background-position: 0 0, 0 5px, 5px -5px, -5px 0px;
         }
+
         .gjs-field-colorp-c {
             display: flex;
             align-items: center;
             gap: 10px;
             margin-bottom: 10px;
         }
+
         .gjs-layer {
             padding: 5px;
             font-size: 12px;
         }
+
         .gjs-layer-title {
             padding: 5px;
         }
+
         /* Dropdown styles */
         .gjs-pn-btn {
             position: relative;
         }
+
         .gjs-pn-btn .dropdown-content {
             display: none;
             position: absolute;
@@ -248,14 +323,16 @@
             left: 0;
             background-color: white;
             min-width: 160px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
             z-index: 1;
             border-radius: 4px;
             border: 1px solid #ddd;
         }
+
         .gjs-pn-btn.active .dropdown-content {
             display: block;
         }
+
         .gjs-pn-btn .dropdown-content a {
             color: black;
             padding: 8px 12px;
@@ -263,22 +340,26 @@
             display: block;
             font-size: 12px;
         }
+
         .gjs-pn-btn .dropdown-content a:hover {
             background-color: #f5f5f5;
         }
+
         .gjs-pn-btn .dropdown-content a.active {
             background-color: #e9ecef;
         }
+
         .gjs-cv-canvas {
             width: 100% !important;
             height: 100%;
             top: 0;
         }
+
         .gjs-pn-panel {
             position: relative !important;
             right: auto !important;
         }
-        
+
         /* Layout block styles */
         .gjs-block[data-block-id="flex-row"],
         .gjs-block[data-block-id="two-columns"],
@@ -289,7 +370,7 @@
             min-height: 50px;
             padding-bottom: 30px;
         }
-        
+
         .gjs-block[data-block-id="flex-row"]::before,
         .gjs-block[data-block-id="two-columns"]::before,
         .gjs-block[data-block-id="three-columns"]::before,
@@ -305,27 +386,27 @@
             background-size: contain;
             opacity: 0.7;
         }
-        
+
         /* Flex Row icon */
         .gjs-block[data-block-id="flex-row"]::before {
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' d='M0 0h24v24H0z'/%3E%3Cpath d='M3 21a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3zm1-2h8V5H4v14zm10 0h6V5h-6v14z' fill='%23626262'/%3E%3C/svg%3E");
         }
-        
+
         /* 2 Columns icon */
         .gjs-block[data-block-id="two-columns"]::before {
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' d='M0 0h24v24H0z'/%3E%3Cpath d='M3 21a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3zm1-2h8V5H4v14zm10 0h6V5h-6v14z' fill='%23626262'/%3E%3C/svg%3E");
         }
-        
+
         /* 3 Columns icon */
         .gjs-block[data-block-id="three-columns"]::before {
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' d='M0 0h24v24H0z'/%3E%3Cpath d='M3 21a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3zm1-2h4V5H4v14zm6 0h4V5h-4v14zm6 0h4V5h-4v14z' fill='%23626262'/%3E%3C/svg%3E");
         }
-        
+
         /* Image with Text icon */
         .gjs-block[data-block-id="image-with-text"]::before {
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' d='M0 0h24v24H0z'/%3E%3Cpath d='M4 5h7a4 4 0 1 1 0 8H4V5zm0 10h16v4H4v-4zm7-5a2 2 0 1 0 0-4H6v4h5z' fill='%23626262'/%3E%3C/svg%3E");
         }
-        
+
         /* Custom Button Styles */
         .custom-button {
             display: inline-block;
@@ -341,26 +422,26 @@
             text-decoration: none;
             transition: all 0.3s ease;
         }
-        
+
         .custom-button:hover {
             background-color: #45a049;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
             transform: translateY(-2px);
         }
-        
+
         .custom-button:active {
             background-color: #3e8e41;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
             transform: translateY(0);
         }
-        
+
         /* Image with Text styles */
         .image-container {
             width: 100%;
             position: relative;
             overflow: hidden;
         }
-        
+
         .image-caption {
             width: 100%;
             padding: 8px;
@@ -369,6 +450,7 @@
             text-align: center;
             font-style: italic;
         }
+
         /* File Explorer Panel */
         .file-explorer-container {
             width: 200px;
@@ -382,7 +464,7 @@
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         .file-explorer-header {
             background-color: #e9ecef;
             padding: 10px;
@@ -396,17 +478,17 @@
         .directory {
             font-weight: 500;
         }
-        
+
         .directory:hover {
             background-color: #e9ecef;
         }
-        
+
         /* Missing resource indicator */
         [data-missing="true"] {
             outline: 2px dashed #dc3545 !important;
             position: relative;
         }
-        
+
         [data-missing="true"]::after {
             content: "⚠️ Missing";
             position: absolute;
@@ -418,17 +500,18 @@
             padding: 2px 5px;
             border-radius: 0 0 0 4px;
         }
-        
+
         /* Toggle button for files panel */
         .btn-toggle-files {
             background-color: #17a2b8 !important;
         }
-        
+
         .btn-toggle-files:hover {
             background-color: #138496 !important;
         }
     </style>
 </head>
+
 <body>
     <div class="editor-row">
         <div class="file-explorer-container">
@@ -454,17 +537,17 @@
     <script type="module">
         import './js/editor.js';
     </script>
-    
+
     <!-- Color Picker React Component -->
     <div id="color-picker-root"></div>
-    
+
     <script type="text/babel">
         // Create a React component for the color picker
         const ColorPickerModal = ({ isOpen, onClose, initialColor, onApply }) => {
             const [color, setColor] = React.useState(initialColor || '#aabbcc');
-            
+
             if (!isOpen) return null;
-            
+
             const modalStyles = {
                 position: 'fixed',
                 top: 0,
@@ -477,7 +560,7 @@
                 zIndex: 99999,
                 backgroundColor: 'rgba(0, 0, 0, 0.5)'
             };
-            
+
             const panelStyles = {
                 backgroundColor: 'white',
                 padding: '16px',
@@ -485,7 +568,7 @@
                 boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.25)',
                 width: '280px'
             };
-            
+
             const titleStyles = {
                 fontSize: '18px',
                 fontWeight: 600,
@@ -493,14 +576,14 @@
                 fontFamily: 'Arial, sans-serif',
                 color: '#333'
             };
-            
+
             const previewContainerStyles = {
                 display: 'flex',
-                alignItems: 'center', 
+                alignItems: 'center',
                 marginTop: '12px',
                 marginBottom: '8px'
             };
-            
+
             const previewStyles = {
                 height: '32px',
                 flexGrow: 1,
@@ -510,7 +593,7 @@
                 backgroundColor: color,
                 boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.1)'
             };
-            
+
             const inputStyles = {
                 width: '96px',
                 padding: '4px 8px',
@@ -519,14 +602,14 @@
                 fontFamily: 'monospace',
                 fontSize: '14px'
             };
-            
+
             const buttonContainerStyles = {
                 display: 'flex',
                 justifyContent: 'flex-end',
                 gap: '8px',
                 marginTop: '12px'
             };
-            
+
             const cancelButtonStyles = {
                 padding: '6px 14px',
                 backgroundColor: '#e2e8f0',
@@ -537,7 +620,7 @@
                 fontSize: '14px',
                 fontWeight: 500
             };
-            
+
             const applyButtonStyles = {
                 padding: '6px 14px',
                 backgroundColor: '#3b82f6',
@@ -549,12 +632,12 @@
                 fontSize: '14px',
                 fontWeight: 500
             };
-            
+
             return (
                 <div style={modalStyles} onClick={onClose}>
                     <div style={panelStyles} onClick={e => e.stopPropagation()}>
                         <h2 style={titleStyles}>Choose Color</h2>
-                        
+
                         {/* Custom Color Grid */}
                         <div style={{
                             display: 'grid',
@@ -572,7 +655,7 @@
                                 // Row 4: Dark colors
                                 '#800000', '#8b4513', '#006400', '#008080', '#000080', '#4b0082', '#800080', '#2f4f4f'
                             ].map((colorValue) => (
-                                <div 
+                                <div
                                     key={colorValue}
                                     style={{
                                         backgroundColor: colorValue,
@@ -590,7 +673,7 @@
                                 />
                             ))}
                         </div>
-                        
+
                         {/* Standard Color Input */}
                         <div style={{
                             marginBottom: '16px',
@@ -621,9 +704,9 @@
                                     backgroundColor: color,
                                     boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.1)'
                                 }}></div>
-                                <input 
-                                    type="text" 
-                                    value={color} 
+                                <input
+                                    type="text"
+                                    value={color}
                                     onChange={e => setColor(e.target.value)}
                                     style={{
                                         width: '96px',
@@ -638,7 +721,7 @@
                                 />
                             </div>
                         </div>
-                        
+
                         <div style={{
                             marginBottom: '16px',
                             border: '1px solid #ddd',
@@ -655,8 +738,8 @@
                             }}>
                                 Custom Color
                             </div>
-                            <input 
-                                type="color" 
+                            <input
+                                type="color"
                                 value={color}
                                 onChange={e => setColor(e.target.value)}
                                 style={{
@@ -670,7 +753,7 @@
                                 }}
                             />
                         </div>
-                        
+
                         <div style={buttonContainerStyles}>
                             <button
                                 style={cancelButtonStyles}
@@ -692,7 +775,7 @@
                 </div>
             );
         };
-        
+
         // Create a class to manage the color picker
         class ColorPickerManager {
             constructor() {
@@ -702,7 +785,7 @@
                 this.initialColor = '#ffffff';
                 this.onApply = null;
             }
-            
+
             open(field, initialColor, onApply) {
                 this.currentField = field;
                 this.initialColor = initialColor || '#ffffff';
@@ -710,15 +793,15 @@
                 this.isOpen = true;
                 this.render();
             }
-            
+
             close() {
                 this.isOpen = false;
                 this.render();
             }
-            
+
             render() {
                 ReactDOM.render(
-                    <ColorPickerModal 
+                    <ColorPickerModal
                         isOpen={this.isOpen}
                         onClose={() => this.close()}
                         initialColor={this.initialColor}
@@ -732,15 +815,16 @@
                 );
             }
         }
-        
+
         // Create a global instance of the color picker manager
         window.colorPickerManager = new ColorPickerManager();
-        
+
         // Initial render
         window.colorPickerManager.render();
-        
+
         // Log to help with debugging
         console.log("Color picker manager initialized:", window.colorPickerManager);
     </script>
 </body>
-</html> 
+
+</html>
