@@ -2228,4 +2228,8 @@ editor.Commands.add('toggle-file-explorer', {
             }
         }
     }
-}); 
+});
+
+// Expose the existing editor instance to the non-invasive project workbench.
+// The workbench only uses this reference after an explicit clone import action.
+window.htmlEditor = editor;

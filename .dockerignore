@@ -1,0 +1,16 @@
+node_modules
+.git
+.gitignore
+dist/output.css
+graphify-out/cache
+ai-website-cloner-template
+svgedit
+vtracer
+mcp-server/.git
+mcp-server/node_modules
+mcp-server/src
+mcp-server/scripts
+mcp-server/docs
+mcp-server/examples
+mcp
+projects/*/jobs

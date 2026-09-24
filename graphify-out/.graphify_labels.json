@@ -1,0 +1,10 @@
+{
+  "0": "VirtualFileSystem",
+  "1": "dependencies",
+  "2": "editor.js",
+  "3": "package.json",
+  "4": "HTML Editor with GrapesJS",
+  "5": "scripts",
+  "6": "postcss.config.js",
+  "7": "tailwind.config.js"
+}

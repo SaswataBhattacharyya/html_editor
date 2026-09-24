@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SVG workspace · HTML editor</title>
+    <style>
+        :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background:#f4f1eb; color:#1c1b19; }
+        * { box-sizing:border-box; } body { margin:0; min-height:100vh; }
+        header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:1rem 1.4rem; background:#fffaf4; border-bottom:1px solid #ddd4c8; position:sticky; top:0; z-index:2; }
+        h1 { font-size:1.1rem; margin:0; } main { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:1rem; padding:1rem; max-width:1500px; margin:auto; }
+        .panel { background:#fffaf4; border:1px solid #ddd4c8; border-radius:18px; padding:1rem; box-shadow:0 8px 24px #4b362414; }
+        .preview { min-height:620px; display:flex; align-items:center; justify-content:center; overflow:hidden; background:linear-gradient(45deg,#eee8df 25%,transparent 25%),linear-gradient(-45deg,#eee8df 25%,transparent 25%),#faf8f5; background-size:24px 24px; }
+        #svg-preview { transform-origin:center; transition:transform .2s ease; max-width:100%; max-height:72vh; } #svg-preview svg { max-width:100%; max-height:72vh; display:block; }
+        button, input, select, textarea { font:inherit; } button { border:0; border-radius:10px; padding:.65rem .85rem; cursor:pointer; background:#e5d8c6; color:#1c1b19; } button.primary { background:#c87835; color:white; }
+        .toolbar, .row { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; } .stack { display:grid; gap:.7rem; } label { font-size:.82rem; font-weight:650; } input, select, textarea { width:100%; padding:.62rem .7rem; border:1px solid #cfc3b5; border-radius:9px; background:#fff; } textarea { min-height:90px; resize:vertical; }
+        .status { min-height:2.4rem; padding:.65rem; border-radius:10px; background:#f0e9df; font-size:.84rem; } .status.error { color:#9d2f25; background:#f9e2de; }
+        #tag-list { max-height:180px; overflow:auto; font-size:.82rem; } .tag-item { padding:.45rem; border-bottom:1px solid #e6ddd3; cursor:pointer; } .muted { color:#716b63; font-size:.82rem; }
+        @media (max-width:800px) { main { grid-template-columns:1fr; } .preview { min-height:420px; } }
+        @media (prefers-color-scheme: dark) { :root { color-scheme:dark; background:#171513; color:#eee7df; } header,.panel { background:#211e1b; border-color:#413a34; } input,select,textarea { background:#171513; color:inherit; border-color:#51483f; } button { background:#41382f; color:inherit; } .status { background:#302923; } }
+    </style>
+</head>
+<body>
+    <header><h1>SVG workspace</h1><div class="toolbar"><button id="back-button">Back to editor</button><button id="svgedit-button">Open SVGEdit</button></div></header>
+    <main>
+        <section class="panel stack">
+            <div class="toolbar"><input id="image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"><button class="primary" id="trace-button">Convert with VTracer</button></div>
+            <div class="toolbar"><button id="zoom-out">−</button><button id="zoom-reset">100%</button><button id="zoom-in">+</button><button id="fit-button">Fit</button><span class="muted" id="selection-label">No SVG element selected</span></div>
+            <div class="preview" id="preview-panel"><div id="svg-preview"><p class="muted">Choose an image to create an editable SVG preview.</p></div></div>
+            <div class="status" id="workspace-status" role="status">Ready.</div>
+        </section>
+        <aside class="panel stack">
+            <div><strong>Tag selected SVG element</strong><p class="muted">Click a path or shape, then describe its role and animation intent.</p></div>
+            <label for="tag-id">Element id</label><input id="tag-id" placeholder="e.g. van-wheel">
+            <label for="tag-role">Role</label><input id="tag-role" placeholder="e.g. wheel, logo, background">
+            <label for="tag-intent">Animation intent</label><textarea id="tag-intent" placeholder="e.g. rotate continuously while the van moves"></textarea>
+            <button class="primary" id="save-tag">Save tag</button>
+            <div><strong>Tags</strong><div id="tag-list"><span class="muted">No tags yet.</span></div></div>
+        </aside>
+    </main>
+    <script type="module" src="./js/svg-workspace.js"></script>
+</body>
+</html>

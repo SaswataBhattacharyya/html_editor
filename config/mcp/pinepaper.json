@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "pinepaper": {
+      "command": "node",
+      "args": [
+        "/home/riki/web_dev/html_editor/mcp-server/dist/cli.js"
+      ],
+      "env": {
+        "PINEPAPER_EXECUTION_MODE": "puppeteer",
+        "PINEPAPER_HEADLESS": "true",
+        "PINEPAPER_EXPORT_DIR": "/home/riki/web_dev/html_editor/projects"
+      }
+    }
+  }
+}

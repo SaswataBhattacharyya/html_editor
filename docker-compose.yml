@@ -1,0 +1,20 @@
+services:
+  html_editor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: html_editor:latest
+    container_name: html_editor
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${HTML_EDITOR_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      HTML_EDITOR_CHROMIUM_PATH: /usr/bin/chromium
+      PINEPAPER_ROOT: /opt/pinepaper
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    volumes:
+      - ./projects:/app/projects
+    restart: unless-stopped

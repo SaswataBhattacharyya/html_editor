@@ -6,14 +6,16 @@
   "type": "module",
   "scripts": {
     "build:css": "tailwindcss -i ./src/input.css -o ./dist/output.css --watch",
-    "start": "serve -p 3000",
-    "dev": "npm run build:css & npm run start"
+    "start": "node server.mjs",
+    "dev": "npm run build:css & node server.mjs",
+    "server": "node server.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@headlessui/react": "^2.2.1",
+    "@visioncortex/vtracer": "^1.0.0-alpha.4",
     "autoprefixer": "^10.4.16",
     "grapesjs": "^0.21.7",
     "postcss": "^8.4.32",
