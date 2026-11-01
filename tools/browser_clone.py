@@ -4,6 +4,8 @@
 import argparse
 import json
 import os
+import hashlib
+import time
 from urllib.parse import unquote, urlparse
 from pathlib import Path
 
@@ -20,6 +22,9 @@ def main():
     parser.add_argument("--scene-report")
     parser.add_argument("--capture-assets-dir")
     parser.add_argument("--runtime-assets-report")
+    parser.add_argument("--interactive-login", action="store_true")
+    parser.add_argument("--auth-continue-file", help="Single-use local signal after the user finishes logging in")
+    parser.add_argument("--login-timeout", type=int, default=600)
     args = parser.parse_args()
 
     html_path = Path(args.html)
@@ -30,7 +35,9 @@ def main():
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     chromium_path = os.environ.get("HTML_EDITOR_CHROMIUM_PATH")
-    launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+    launch_options = {"headless": not args.interactive_login, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+    if args.interactive_login and not args.auth_continue_file:
+        parser.error("--interactive-login requires --auth-continue-file")
     if chromium_path:
         launch_options["executable_path"] = chromium_path
 
@@ -42,6 +49,7 @@ def main():
         scene_files = []
         wasm_files = []
         runtime_assets = []
+        model_assets = []
         failed_requests = []
         http_errors = []
         capture_dir = Path(args.capture_assets_dir) if args.capture_assets_dir else None
@@ -49,6 +57,8 @@ def main():
         capture_origin = urlparse(args.url).netloc
         capture_bytes = 0
         capture_count = 0
+        model_extensions = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode"}
+        seen_assets = set()
         max_capture_assets = int(os.environ.get("BROWSER_CAPTURE_MAX_ASSETS", "300"))
         max_capture_bytes = int(os.environ.get("BROWSER_CAPTURE_MAX_BYTES", str(200 * 1024 * 1024)))
         if scene_dir:
@@ -61,33 +71,54 @@ def main():
                 nonlocal capture_bytes, capture_count
                 request = response.request
                 parsed = urlparse(response.url)
-                if (response.status != 200 or parsed.netloc != capture_origin or
+                extension = Path(parsed.path).suffix.lower()
+                is_model = extension in model_extensions
+                same_origin = parsed.netloc == capture_origin
+                if (response.status != 200 or not (same_origin or is_model) or
                         request.resource_type in {"document", "websocket", "eventsource"} or
                         capture_count >= max_capture_assets or capture_bytes >= max_capture_bytes):
+                    return
+                # Capture cross-origin responses ONLY for recognized 3D file formats.
+                # Do not mirror cross-origin API responses or private user data.
+                safe_url = parsed._replace(query="", fragment="").geturl()
+                identity = response.url
+                if identity in seen_assets:
                     return
                 try:
                     body = response.body()
                     if len(body) > max_capture_bytes - capture_bytes:
                         return
-                    relative = Path(unquote(parsed.path).lstrip("/"))
-                    if not relative.parts or any(part in {"..", "."} for part in relative.parts):
+                    if same_origin:
+                        relative = Path(unquote(parsed.path).lstrip("/"))
+                    else:
+                        digest = hashlib.sha256(response.url.encode("utf-8")).hexdigest()[:20]
+                        hostname = "".join(c for c in parsed.hostname or "" if c.isalnum() or c in ".-")
+                        relative = Path("assets") / "external-models" / hostname / (digest + extension)
+                    if (not relative.parts or any(part in {"..", "."} for part in relative.parts)
+                            or relative.is_absolute()):
                         return
                     target = (capture_dir / relative).resolve()
                     if not target.is_relative_to(capture_dir.resolve()):
                         return
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(body)
+                    seen_assets.add(identity)
                     capture_bytes += len(body)
                     capture_count += 1
-                    runtime_assets.append({
-                        "url": response.url,
+                    record = {
+                        "url": safe_url if args.interactive_login or not same_origin else response.url,
                         "path": relative.as_posix(),
                         "bytes": len(body),
                         "contentType": response.headers.get("content-type", ""),
                         "status": response.status,
-                    })
+                        "external": not same_origin,
+                        "is3d": is_model,
+                    }
+                    runtime_assets.append(record)
+                    if is_model:
+                        model_assets.append(record)
                 except Exception as error:
-                    runtime_assets.append({"url": response.url, "error": str(error)})
+                    runtime_assets.append({"url": safe_url, "error": str(error)})
 
             page.on("response", capture_runtime_asset)
 
@@ -119,7 +150,27 @@ def main():
                     (scene_files if is_scene else wasm_files).append({"url": url, "error": str(error)})
 
             page.on("response", capture_spline_response)
-        response = page.goto(args.url, wait_until="networkidle", timeout=30000)
+        response = page.goto(
+            args.url,
+            wait_until="domcontentloaded" if args.interactive_login else "networkidle",
+            timeout=30000,
+        )
+        if args.interactive_login:
+            # The user's own visible Chromium window handles credentials, 2FA and
+            # protected navigation. No storage_state, cookies or passwords are saved.
+            signal = Path(args.auth_continue_file)
+            deadline = time.monotonic() + max(30, min(args.login_timeout, 1800))
+            while not signal.exists() and time.monotonic() < deadline:
+                if page.is_closed():
+                    raise RuntimeError("Login browser was closed before capture")
+                page.wait_for_timeout(300)
+            if not signal.exists():
+                raise TimeoutError("Timed out waiting for the user to continue after login")
+            signal.unlink(missing_ok=True)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass  # Websocket/long-polling apps may never become network-idle.
         # Spline's canvas can finish loading after networkidle. Give its
         # runtime a short window to request .splinecode and WASM resources.
         if scene_dir:
@@ -141,7 +192,7 @@ def main():
         # ActionForge's animation GLBs are fetched only after a clip is
         # selected. Sample one non-destructive clip so the clone captures the
         # real runtime asset as well as the initial mannequin and library.
-        if urlparse(args.url).hostname == "actionforge.app":
+        if not args.interactive_login and urlparse(args.url).hostname == "actionforge.app":
             try:
                 page.evaluate("fetch('/assets/animation-library/icons/characters/mannequin.webp')")
                 page.wait_for_timeout(500)
@@ -154,6 +205,11 @@ def main():
         page.wait_for_timeout(300)
         page.screenshot(path=str(screenshot_path), full_page=True)
         html_path.write_text(page.content(), encoding="utf-8")
+        scene_hints = page.evaluate("""() => Array.from(document.querySelectorAll('canvas')).map(c => ({
+          engine: c.dataset.engine || null, width: c.width, height: c.height,
+          webgl: !!(c.getContext && (c.getContext('webgl2') || c.getContext('webgl')))
+        }))""")
+        # A canvas is evidence of rendering, NOT proof that mesh export is possible.
         report = {
             "url": args.url,
             "title": page.title(),
@@ -166,6 +222,9 @@ def main():
             "sceneFiles": scene_files,
             "wasmFiles": wasm_files,
             "runtimeAssets": runtime_assets,
+            "modelAssets": model_assets,
+            "canvasHints": scene_hints,
+            "interactiveLogin": args.interactive_login,
             "runtimeAssetCount": capture_count,
             "runtimeAssetBytes": capture_bytes,
             "failedRequests": failed_requests,
@@ -175,7 +234,7 @@ def main():
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         if runtime_report_path:
             runtime_report_path.parent.mkdir(parents=True, exist_ok=True)
-            runtime_report_path.write_text(json.dumps({"assets": runtime_assets, "count": capture_count, "bytes": capture_bytes, "failedRequests": failed_requests, "httpErrors": http_errors, "interactionTrace": interaction_trace}, indent=2) + "\n", encoding="utf-8")
+            runtime_report_path.write_text(json.dumps({"assets": runtime_assets, "models": model_assets, "canvasHints": scene_hints, "count": capture_count, "bytes": capture_bytes, "failedRequests": failed_requests, "httpErrors": http_errors, "interactionTrace": interaction_trace}, indent=2) + "\n", encoding="utf-8")
         if scene_report_path:
             scene_report_path.parent.mkdir(parents=True, exist_ok=True)
             scene_report_path.write_text(json.dumps({"sceneFiles": scene_files, "wasmFiles": wasm_files}, indent=2) + "\n", encoding="utf-8")
