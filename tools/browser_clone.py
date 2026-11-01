@@ -2,6 +2,7 @@
 """Capture a rendered website with Playwright for the local HTML editor worker."""
 
 import argparse
+import base64
 import json
 import os
 import hashlib
@@ -15,6 +16,7 @@ from playwright.sync_api import sync_playwright
 # `.meshy` is Meshy's proprietary runtime model payload. It is useful to retain
 # for an authorized capture, but is not a standard Blender interchange format.
 MODEL_EXTENSIONS = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode", ".meshy"}
+MAX_DECODED_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024
 
 
 def is_wasm_resource(url, content_type):
@@ -31,6 +33,75 @@ def should_retain_authenticated_response(resource_type, is_model, is_wasm):
 
 def should_capture_cross_origin_asset(same_origin, is_model, generic_binary, is_wasm):
     return same_origin or is_model or generic_binary or is_wasm
+
+
+def mesh_worker_capture_init_script():
+    return r"""(() => {
+      window.__htmlEditorDecodedMeshOutputs = [];
+      const NativeWorker = window.Worker;
+      window.Worker = new Proxy(NativeWorker, {
+        construct(target, args) {
+          const worker = Reflect.construct(target, args);
+          let workerPath = "";
+          try { workerPath = new URL(args[0], location.href).pathname; } catch {}
+          if (workerPath.endsWith("/resource/decrypt/loader-worker.min.js")) {
+            worker.addEventListener("message", event => {
+              const message = event.data;
+              // Retain only successful decoded model output. Never inspect or
+              // persist the worker's authorization messages/signature fields.
+              if (message?.type !== "process" || message.success !== true || !(message.data instanceof ArrayBuffer)) return;
+              const bytes = new Uint8Array(message.data);
+              if (!bytes.byteLength || bytes.byteLength > 67108864) return;
+              let binary = "";
+              const chunkSize = 0x8000;
+              for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+                binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+              }
+              window.__htmlEditorDecodedMeshOutputs.push({ byteLength: bytes.byteLength, base64: btoa(binary) });
+            });
+          }
+          return worker;
+        }
+      });
+    })();"""
+
+
+def save_decoded_worker_outputs(page, capture_dir, runtime_assets, model_assets, remaining_bytes, remaining_count):
+    outputs = page.evaluate("""() => (window.__htmlEditorDecodedMeshOutputs || []).map(({ byteLength, base64 }) => ({ byteLength, base64 }))""")
+    saved = []
+    for item in outputs:
+        if len(saved) >= remaining_count:
+            break
+        try:
+            body = base64.b64decode(item["base64"], validate=True)
+        except (KeyError, ValueError, TypeError):
+            continue
+        if not body or len(body) != item.get("byteLength") or len(body) > remaining_bytes:
+            continue
+        is_glb = len(body) >= 12 and body[:4] == b"glTF" and int.from_bytes(body[8:12], "little") == len(body)
+        extension = ".glb" if is_glb else ".bin"
+        relative = Path("assets") / "decoded-runtime" / f"mesh-worker-output-{len(saved):02d}{extension}"
+        target = (Path(capture_dir).resolve() / relative).resolve()
+        if not target.is_relative_to(Path(capture_dir).resolve()):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(body)
+        record = {
+            "path": relative.as_posix(),
+            "bytes": len(body),
+            "contentType": "model/gltf-binary" if is_glb else "application/octet-stream",
+            "status": 200,
+            "external": False,
+            "is3d": is_glb,
+            "decodedFromMeshyWorker": True,
+            "detectedFormat": "glb" if is_glb else "opaque-binary",
+        }
+        runtime_assets.append(record)
+        if is_glb:
+            model_assets.append(record)
+        saved.append(record)
+        remaining_bytes -= len(body)
+    return saved
 
 
 def wait_for_login_continue(page, signal_path, timeout_seconds):
@@ -120,6 +191,7 @@ def main():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(**launch_options)
         page = browser.new_page(viewport={"width": 1440, "height": 1000}, device_scale_factor=1)
+        page.add_init_script(mesh_worker_capture_init_script())
         # Apps with many large JS chunks can evict a model response from
         # Chromium's DevTools cache before Playwright's response.body() reads
         # it. Raise the bounded CDP body buffers before navigating so large
@@ -337,6 +409,16 @@ def main():
                     model_assets.append(record)
             except Exception as error:
                 runtime_assets.append({"url": report_url(download.url), "error": str(error)})
+        decoded_mesh_outputs = save_decoded_worker_outputs(
+            page,
+            capture_dir,
+            runtime_assets,
+            model_assets,
+            max_capture_bytes - capture_bytes,
+            max_capture_assets - capture_count,
+        ) if capture_dir else []
+        capture_bytes += sum(item["bytes"] for item in decoded_mesh_outputs)
+        capture_count += len(decoded_mesh_outputs)
         page.screenshot(path=str(screenshot_path), full_page=True)
         html_path.write_text(page.content(), encoding="utf-8")
         scene_hints = page.evaluate("""() => Array.from(document.querySelectorAll('canvas')).map(c => ({
@@ -358,6 +440,7 @@ def main():
             "sceneFiles": scene_files,
             "wasmFiles": wasm_files,
             "decoderFiles": decoder_files,
+            "decodedMeshOutputs": decoded_mesh_outputs,
             "runtimeAssets": runtime_assets,
             "modelAssets": model_assets,
             "canvasHints": scene_hints,
@@ -371,7 +454,7 @@ def main():
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         if runtime_report_path:
             runtime_report_path.parent.mkdir(parents=True, exist_ok=True)
-            runtime_report_path.write_text(json.dumps({"assets": runtime_assets, "models": model_assets, "decoderFiles": decoder_files, "canvasHints": scene_hints, "count": capture_count, "bytes": capture_bytes, "failedRequests": failed_requests, "httpErrors": http_errors, "interactionTrace": interaction_trace}, indent=2) + "\n", encoding="utf-8")
+            runtime_report_path.write_text(json.dumps({"assets": runtime_assets, "models": model_assets, "decoderFiles": decoder_files, "decodedMeshOutputs": decoded_mesh_outputs, "canvasHints": scene_hints, "count": capture_count, "bytes": capture_bytes, "failedRequests": failed_requests, "httpErrors": http_errors, "interactionTrace": interaction_trace}, indent=2) + "\n", encoding="utf-8")
         if scene_report_path:
             scene_report_path.parent.mkdir(parents=True, exist_ok=True)
             scene_report_path.write_text(json.dumps({"sceneFiles": scene_files, "wasmFiles": wasm_files}, indent=2) + "\n", encoding="utf-8")

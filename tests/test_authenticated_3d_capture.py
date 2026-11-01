@@ -110,6 +110,7 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
         glb = make_minimal_glb()
         meshy = b"MESHY\x00encrypted-test-payload"
         wasm = b"\x00asm\x01\x00\x00\x00test-decoder"
+        decoded_output = b"decoded-mesh-worker-output"
         other = b"not a model response"
         class CdnHandler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -132,6 +133,14 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
 
         class SiteHandler(BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.path == "/resource/decrypt/loader-worker.min.js":
+                    worker = f"const data = new TextEncoder().encode({json.dumps(decoded_output.decode())}).buffer; self.postMessage({{type:'process',success:true,data}},[data]);".encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/javascript")
+                    self.send_header("Content-Length", str(len(worker)))
+                    self.end_headers()
+                    self.wfile.write(worker)
+                    return
                 if self.path == "/local-decoder.wasm":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/wasm")
@@ -155,6 +164,7 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
                     fetch('http://localhost:{cdn_port}/decoder.wasm').then(r => r.arrayBuffer()),
                     fetch('/local-decoder.wasm').then(r => r.arrayBuffer())
                   ]);
+                  new Worker('/resource/decrypt/loader-worker.min.js');
                 </script>""".encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
@@ -189,6 +199,7 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
                 report = json.loads((source / "runtime-assets.json").read_text())
                 self.assertEqual(len(report["models"]), 2, json.dumps(report, indent=2))
                 self.assertEqual(len(report["decoderFiles"]), 2, json.dumps(report, indent=2))
+                self.assertEqual(len(report["decodedMeshOutputs"]), 1, json.dumps(report, indent=2))
                 self.assertTrue(any(model.get("external") for model in report["models"]))
                 for model in report["models"]:
                     content = (package / model["path"]).read_bytes()
@@ -199,7 +210,10 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
                         self.assertEqual(content, meshy)
                 for decoder in report["decoderFiles"]:
                     self.assertEqual((package / decoder["path"]).read_bytes(), wasm)
-                self.assertEqual(len(report["assets"]), 4)
+                decoded = report["decodedMeshOutputs"][0]
+                self.assertEqual(decoded["detectedFormat"], "opaque-binary")
+                self.assertEqual((package / decoded["path"]).read_bytes(), decoded_output)
+                self.assertEqual(len(report["assets"]), 6)
         finally:
             cdn.shutdown()
             cdn.server_close()
