@@ -928,6 +928,32 @@ const server = createServer(async (request, response) => {
                 return;
             }
 
+            if (segments[3] === 'jobs' && segments[4] && segments[5] === 'continue-login' && segments.length === 6 && request.method === 'POST') {
+                // This endpoint only unlocks the already running local Chromium
+                // window. No usernames, passwords, cookies or tokens go over HTTP.
+                if (!['127.0.0.1', 'localhost', '::1'].includes(bindHost)) {
+                    sendJson(response, 403, { error: 'Interactive login is available only when the editor is bound to localhost.' });
+                    return;
+                }
+                const jobId = segments[4];
+                if (!/^[0-9]+-[a-f0-9]{8}$/.test(jobId)) {
+                    sendJson(response, 400, { error: 'Invalid job id' });
+                    return;
+                }
+                const folder = path.join(projectPath(projectId), 'jobs', jobId);
+                let status;
+                try { status = JSON.parse(await fs.readFile(path.join(folder, 'status.json'), 'utf8')); }
+                catch { sendJson(response, 404, { error: 'Job not found' }); return; }
+                if (status.status !== 'awaiting-login' || !status.interactiveLogin) {
+                    sendJson(response, 409, { error: 'This job is not waiting for a login.' });
+                    return;
+                }
+                await fs.writeFile(path.join(folder, 'login-continue.signal'), 'continue\n', { flag: 'w' });
+                await writeJobStatus(projectId, jobId, { status: 'running', message: 'Finishing capture in your authenticated browser…', progress: 8 });
+                sendJson(response, 200, { ok: true });
+                return;
+            }
+
             if (segments[3] === 'jobs' && segments[4] && segments.length === 5 && request.method === 'GET') {
                 try {
                     const status = JSON.parse(await fs.readFile(path.join(projectPath(projectId), 'jobs', segments[4], 'status.json'), 'utf8'));
@@ -975,6 +1001,10 @@ const server = createServer(async (request, response) => {
 
             if (segments[3] === 'clone' && request.method === 'POST') {
                 const payload = await readJsonBody(request);
+                if (payload.interactiveLogin === true && !['127.0.0.1', 'localhost', '::1'].includes(bindHost)) {
+                    sendJson(response, 403, { error: 'Authenticated capture is desktop-only and requires the editor to bind to localhost.' });
+                    return;
+                }
                 if (!/^https?:\/\//i.test(String(payload.url || ''))) {
                     sendJson(response, 400, { error: 'A valid http(s) URL is required' });
                     return;
