@@ -10,10 +10,20 @@ import { runPinePaper } from './tools/pinepaper-client.mjs';
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const projectsDir = path.join(rootDir, 'projects');
 const port = Number(process.env.PORT || 3000);
+const bindHost = process.env.HTML_EDITOR_HOST || '127.0.0.1'; // Private captures must never be served publicly by default.
 const cloneLimits = { assets: 300, assetBytes: 50 * 1024 * 1024, totalBytes: 200 * 1024 * 1024 };
 
 const mimeTypes = {
     '.css': 'text/css; charset=utf-8',
+    '.glb': 'model/gltf-binary',
+    '.gltf': 'model/gltf+json',
+    '.fbx': 'application/octet-stream',
+    '.obj': 'text/plain; charset=utf-8',
+    '.bin': 'application/octet-stream',
+    '.ktx2': 'image/ktx2',
+    '.basis': 'application/octet-stream',
+    '.splinecode': 'application/octet-stream',
+    '.usdz': 'model/vnd.usdz+zip',
     '.gif': 'image/gif',
     '.html': 'text/html; charset=utf-8',
     '.ico': 'image/x-icon',
@@ -236,6 +246,7 @@ const createCloneJob = async (projectId, payload) => {
         updatedAt: now,
         projectId,
         url: String(payload.url || '').trim(),
+        interactiveLogin: payload.interactiveLogin === true,
         worker: 'local-static-crawler'
     };
     await fs.mkdir(jobDirectory, { recursive: true });
@@ -271,7 +282,7 @@ const downloadUrlForAsset = (url) => {
     return url;
 };
 
-const isPublicMediaAsset = (url) => /\.(?:avif|bmp|css|gif|ico|jpe?g|mjs|mp3|mp4|ogg|png|svg|webm|webp|woff2?|ttf|otf)(?:$|[?#])/i.test(url.pathname);
+const isPublicMediaAsset = (url) => /\.(?:avif|bmp|css|gif|ico|jpe?g|mjs|mp3|mp4|ogg|png|svg|webm|webp|woff2?|ttf|otf|glb|gltf|fbx|obj|ktx2|basis|usdz|splinecode)(?:$|[?#])/i.test(url.pathname);
 const splineRuntimeUrl = 'https://unpkg.com/@splinetool/runtime@1.10.89/build/runtime.js';
 
 const extractAssetReferences = (html, pageUrl) => {
@@ -344,6 +355,9 @@ const runBrowserCapture = (projectId, job, directory) => new Promise((resolve) =
         '--capture-assets-dir', packageDirectory,
         '--runtime-assets-report', path.join(directory, 'source', 'runtime-assets.json')
     ];
+    if (job.interactiveLogin) {
+        args.push('--interactive-login', '--auth-continue-file', path.join(directory, 'jobs', job.id, 'login-continue.signal'));
+    }
     const child = spawn(process.env.PYTHON_BIN || 'python3', args, { cwd: rootDir, env: process.env });
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
@@ -398,12 +412,33 @@ const runCloneJob = async (projectId, job) => {
     try {
         await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler', progress: 5, message: 'Fetching the target HTML' });
         const targetUrl = new URL(job.url);
-        const page = await fetchBytes(targetUrl.href);
+        // Capture the user's own authenticated browser BEFORE fetching protected HTML.
+        // Never save Playwright storage_state, cookies or credentials.
+        let browserCapture = null;
+        if (job.interactiveLogin) {
+            await fs.rm(assetDirectory, { recursive: true, force: true });
+            await fs.rm(path.join(packageDirectory, 'spline-scenes'), { recursive: true, force: true });
+            await fs.mkdir(assetDirectory, { recursive: true });
+            await writeJobStatus(projectId, job.id, {
+                status: 'awaiting-login', progress: 5,
+                message: 'Log in using the Chromium window on this computer, then click Continue after login.'
+            });
+            browserCapture = await runBrowserCapture(projectId, job, directory);
+            if (!browserCapture.ok) throw new Error(`Interactive browser capture failed: ${browserCapture.error}`);
+            await writeJobStatus(projectId, job.id, {
+                status: 'running', progress: 10, message: 'Capturing the signed-in page and 3D assets'
+            });
+        }
+        const page = job.interactiveLogin
+            ? { bytes: await fs.readFile(path.join(packageDirectory, 'rendered.html')) }
+            : await fetchBytes(targetUrl.href);
         let html = page.bytes.toString('utf8');
-        // A new clone is a refresh of the package. Remove stale assets from a
-        // previous attempt so broken old references cannot survive a retry.
-        await fs.rm(assetDirectory, { recursive: true, force: true });
-        await fs.rm(path.join(packageDirectory, 'spline-scenes'), { recursive: true, force: true });
+        // Public captures refresh their asset directory. Signed-in captures must
+        // retain assets the user just loaded in the interactive browser.
+        if (!job.interactiveLogin) {
+            await fs.rm(assetDirectory, { recursive: true, force: true });
+            await fs.rm(path.join(packageDirectory, 'spline-scenes'), { recursive: true, force: true });
+        }
         await fs.mkdir(assetDirectory, { recursive: true });
         await fs.writeFile(path.join(directory, 'source', 'raw.html'), html);
         const assetGroups = new Map();
@@ -438,9 +473,19 @@ const runCloneJob = async (projectId, job) => {
                 break;
             }
             try {
-                const asset = await fetchBytes(downloadUrl.href);
-                totalBytes += asset.bytes.length;
                 const local = safePackagePath(downloadUrl);
+                let asset;
+                if (job.interactiveLogin) {
+                    // Only use resources observed inside the authorized browser.
+                    // Never re-request the private page without that browser session.
+                    const savedPath = path.resolve(packageDirectory, local);
+                    if (!savedPath.startsWith(`${path.resolve(packageDirectory)}${path.sep}`)) throw new Error('Unsafe asset path');
+                    const bytes = await fs.readFile(savedPath);
+                    asset = { bytes, contentType: '' };
+                } else {
+                    asset = await fetchBytes(downloadUrl.href);
+                }
+                totalBytes += asset.bytes.length;
                 const localPath = path.resolve(packageDirectory, local);
                 if (!localPath.startsWith(`${path.resolve(packageDirectory)}${path.sep}`)) throw new Error(`Asset path escapes the clone package: ${downloadUrl.pathname}`);
                 await fs.mkdir(path.dirname(localPath), { recursive: true });
@@ -494,7 +539,8 @@ const runCloneJob = async (projectId, job) => {
         const report = { url: job.url, fetchedAt: new Date().toISOString(), assetsDownloaded: downloadedLocals.length, warnings, limitations: ['Static HTML/assets and CSS dependencies are mirrored; JavaScript-loaded resources, authenticated content, CORS restrictions, and server-side routes may still require browser-specific handling.'] };
         await fs.writeFile(path.join(directory, 'source', 'clone-report.json'), `${JSON.stringify(report, null, 2)}\n`);
         await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler+playwright', progress: 92, message: 'Capturing the rendered page with Playwright' });
-        const browserCapture = await runBrowserCapture(projectId, job, directory);
+        browserCapture = browserCapture || await runBrowserCapture(projectId, job, directory);
+        let capturedModels = [];
         if (browserCapture.ok) {
             report.browserCapture = 'completed';
             try {
@@ -502,18 +548,28 @@ const runCloneJob = async (projectId, job) => {
                 const runtimeAssets = runtimeCapture.assets || [];
                 report.runtimeAssetsCaptured = runtimeCapture.count || 0;
                 report.runtimeAssetBytes = runtimeCapture.bytes || 0;
+                capturedModels = runtimeCapture.models || [];
+                report.modelAssets = capturedModels;
+                report.canvasHints = runtimeCapture.canvasHints || [];
                 const sourceOrigin = targetUrl.origin;
                 const rewritePaths = new Map();
                 for (const item of runtimeAssets) {
                     if (!item.url || item.status !== 200) continue;
                     const remoteUrl = new URL(item.url);
-                    if (remoteUrl.origin !== sourceOrigin) continue;
-                    const local = safePackagePath(remoteUrl);
+                    // External files are admitted only when the browser captured
+                    // an actual 3D asset (not arbitrary private API responses).
+                    if (remoteUrl.origin !== sourceOrigin && !item.is3d) continue;
+                    const local = item.path || safePackagePath(remoteUrl);
+                    const localPath = path.resolve(packageDirectory, local);
+                    if (!localPath.startsWith(`${path.resolve(packageDirectory)}${path.sep}`)) continue;
                     if (!downloadedLocals.includes(local)) downloadedLocals.push(local);
                     const localUrl = `/projects/${projectId}/website-package/${local}`;
-                    rewritePaths.set(remoteUrl.pathname + remoteUrl.search, localUrl);
-                    rewritePaths.set(remoteUrl.pathname, localUrl);
                     rewritePaths.set(remoteUrl.href, localUrl);
+                    rewritePaths.set(remoteUrl.origin + remoteUrl.pathname, localUrl);
+                    if (remoteUrl.origin === sourceOrigin) {
+                        rewritePaths.set(remoteUrl.pathname + remoteUrl.search, localUrl);
+                        rewritePaths.set(remoteUrl.pathname, localUrl);
+                    }
                 }
                 // Browser-captured apps commonly lazy-load JavaScript chunks
                 // only after a user opens a panel or starts an export. Walk
@@ -617,7 +673,7 @@ const runCloneJob = async (projectId, job) => {
                 // early fetch/XHR bridge below localizes observed runtime URLs
                 // without changing application bundles.
                 const capturedPathMap = Object.fromEntries([...rewritePaths.entries()].map(([remote, local]) => [remote, local]));
-                const runtimeBridge = `<script id="html-editor-runtime-asset-bridge">(()=>{const paths=${JSON.stringify(capturedPathMap)};const root=new URL('./',location.href);const localize=value=>{try{const url=new URL(value instanceof Request?value.url:value,location.href);const target=paths[url.pathname+url.search]||paths[url.pathname];if(!target)return value;const local=new URL(target.replace(/^\\/projects\\/[^/]+\\/website-package\\//,''),root);local.search=url.search;return value instanceof Request?new Request(local,value):local.href}catch{return value}};const fetchNative=window.fetch.bind(window);window.fetch=(input,init)=>fetchNative(localize(input),init);const xhrOpen=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url,...rest){return xhrOpen.call(this,method,localize(url),...rest)};})();</script>`;
+                const runtimeBridge = `<script id="html-editor-runtime-asset-bridge">(()=>{const paths=${JSON.stringify(capturedPathMap)};const root=new URL('./',location.href);const localize=value=>{try{const url=new URL(value instanceof Request?value.url:value,location.href);const target=paths[url.href]||paths[url.origin+url.pathname]||paths[url.pathname+url.search]||paths[url.pathname];if(!target)return value;const local=new URL(target.replace(/^\\/projects\\/[^/]+\\/website-package\\//,''),root);local.search=url.search;return value instanceof Request?new Request(local,value):local.href}catch{return value}};const fetchNative=window.fetch.bind(window);window.fetch=(input,init)=>fetchNative(localize(input),init);const xhrOpen=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url,...rest){return xhrOpen.call(this,method,localize(url),...rest)};})();</script>`;
                 let packageHtml = await fs.readFile(path.join(packageDirectory, 'index.html'), 'utf8');
                 packageHtml = packageHtml.replace('</head>', `${runtimeBridge}</head>`);
                 await fs.writeFile(path.join(packageDirectory, 'index.html'), packageHtml);
@@ -637,8 +693,9 @@ const runCloneJob = async (projectId, job) => {
                 }
             } catch { report.splineScenes = { sceneFiles: [], wasmFiles: [] }; }
             report.limitations = report.splineScenes?.sceneFiles?.length
-                ? ['Authenticated content and server-side routes still require credentials or an agent worker.', 'Spline scene data was captured locally. The HTML editor uses the rendered replay for stable editing; native Spline object editing still requires the Spline runtime/editor.']
-                : ['Authenticated content and server-side routes still require credentials or an agent worker.'];
+                ? ['Spline data was captured; native object editing requires its own runtime/editor.']
+                : ['Live WebGL canvases cannot always be converted to editable mesh files; only network-loaded 3D assets are exported.'];
+            if (job.interactiveLogin) report.limitations.push('Signed-in HTML may contain private account data. Do not share the package or serve it on a public interface. Authentication and backend APIs are not reproduced.');
         } else {
             report.browserCapture = 'unavailable';
             warnings.push(`Browser capture unavailable: ${browserCapture.error}`);
@@ -660,7 +717,7 @@ const runCloneJob = async (projectId, job) => {
                     report.splineRuntime = 'unavailable';
                     warnings.push(`Native Spline runtime unavailable: ${error.message}`);
                 }
-            } else {
+            } else if (!job.interactiveLogin) {
                 await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler+playwright+motion', progress: 96, message: 'Capturing a local replay of the rendered hero animation' });
                 motionCapture = await runMotionCapture(job, directory);
                 if (motionCapture.ok) {
@@ -689,12 +746,13 @@ const runCloneJob = async (projectId, job) => {
             motionUrl: nextProject.motionUrl,
             splineRuntime: splineRuntime.ok ? splineRuntime : null,
             splineScenes: report.splineScenes || null,
+            modelAssets: capturedModels,
+            interactiveLogin: job.interactiveLogin,
             reportUrl: `/projects/${projectId}/source/clone-report.json`,
             assets: [...new Set(downloadedLocals)]
         };
         await fs.writeFile(path.join(packageDirectory, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
         await fs.writeFile(path.join(directory, 'project.json'), `${JSON.stringify(nextProject, null, 2)}\n`);
-        await refreshProjectGraph(projectId);
         await refreshProjectGraph(projectId);
         const workerName = splineRuntime.ok ? 'local-static-crawler+playwright+spline-runtime' : (browserCapture.ok ? 'local-static-crawler+playwright+motion' : 'local-static-crawler');
         const message = splineRuntime.ok
@@ -964,7 +1022,7 @@ const server = createServer(async (request, response) => {
 });
 
 await fs.mkdir(projectsDir, { recursive: true });
-server.listen(port, '0.0.0.0', () => {
-    console.log(`[html_editor] listening on http://127.0.0.1:${port}`);
+server.listen(port, bindHost, () => {
+    console.log(`[html_editor] listening on http://${bindHost}:${port}`);
     console.log(`[html_editor] projects root: ${projectsDir}`);
 });
