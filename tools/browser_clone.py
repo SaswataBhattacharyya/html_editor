@@ -217,11 +217,12 @@ def main():
         page.wait_for_timeout(300)
         page.screenshot(path=str(screenshot_path), full_page=True)
         html_path.write_text(page.content(), encoding="utf-8")
-        scene_hints = page.evaluate("""() => Array.from(document.querySelectorAll('canvas')).map(c => {
-          let webgl = false;
-          try { webgl = !!(c.getContext && (c.getContext('webgl2') || c.getContext('webgl'))); } catch (_) {}
-          return {engine: c.dataset.engine || null, width: c.width, height: c.height, webgl};
-        })""")
+        scene_hints = page.evaluate("""() => Array.from(document.querySelectorAll('canvas')).map(c => ({
+          engine: c.dataset.engine || null,
+          width: c.width,
+          height: c.height,
+          webglHint: /three|babylon|webgl|spline/i.test(c.dataset.engine || '')
+        }))""")
         # A canvas is evidence of rendering, NOT proof that mesh export is possible.
         report = {
             "url": args.url,
