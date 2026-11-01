@@ -224,6 +224,17 @@ const normalizeCloneUrl = (value) => {
     return url.href;
 };
 
+const safeCaptureUrl = (value, redactQuery = false) => {
+    try {
+        const url = new URL(value);
+        url.hash = '';
+        if (redactQuery) url.search = '';
+        return url.href;
+    } catch { return String(value || ''); }
+};
+
+const redactUrlText = (value) => String(value || '').replace(/https?:\/\/[^\s"'<>]+/gi, (candidate) => safeCaptureUrl(candidate, true));
+
 const createCloneJob = async (projectId, payload) => {
     const project = await readProject(projectId);
     if (!project) return null;
@@ -250,8 +261,13 @@ const createCloneJob = async (projectId, payload) => {
         worker: 'local-static-crawler'
     };
     await fs.mkdir(jobDirectory, { recursive: true });
-    await fs.writeFile(path.join(jobDirectory, 'request.json'), `${JSON.stringify(request, null, 2)}\n`);
-    await fs.writeFile(path.join(jobDirectory, 'status.json'), `${JSON.stringify(request, null, 2)}\n`);
+    const persistedRequest = { ...request, url: safeCaptureUrl(request.url, request.interactiveLogin) };
+    await fs.writeFile(path.join(jobDirectory, 'request.json'), `${JSON.stringify(persistedRequest, null, 2)}\n`);
+    await fs.writeFile(path.join(jobDirectory, 'status.json'), `${JSON.stringify(persistedRequest, null, 2)}\n`);
+    if (request.interactiveLogin) {
+        const safeProject = { ...project, sourceUrl: safeCaptureUrl(request.url, true), updatedAt: now };
+        await fs.writeFile(path.join(projectPath(projectId), 'project.json'), `${JSON.stringify(safeProject, null, 2)}\n`);
+    }
     return request;
 };
 
@@ -260,6 +276,12 @@ const writeJobStatus = async (projectId, jobId, patch) => {
     let current = {};
     try { current = JSON.parse(await fs.readFile(statusPath, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    if (next.interactiveLogin) {
+        next.url = safeCaptureUrl(next.url, true);
+        if (next.message) next.message = redactUrlText(next.message);
+        if (next.error) next.error = redactUrlText(next.error);
+        if (Array.isArray(next.warnings)) next.warnings = next.warnings.map(redactUrlText);
+    }
     await fs.writeFile(statusPath, `${JSON.stringify(next, null, 2)}\n`);
     return next;
 };
@@ -407,9 +429,20 @@ const injectSplineRuntime = (html) => {
 const runCloneJob = async (projectId, job) => {
     const directory = await ensureProject(projectId);
     const packageDirectory = path.join(directory, 'website-package');
+    const previousPackage = path.join(directory, 'jobs', job.id, 'previous-website-package');
+    let hadUsablePackage = false;
+    let backupReady = false;
     const assetDirectory = path.join(packageDirectory, 'assets');
     const warnings = [];
     try {
+        try {
+            await fs.access(path.join(packageDirectory, 'index.html'));
+            hadUsablePackage = true;
+            await fs.cp(packageDirectory, previousPackage, { recursive: true, errorOnExist: true });
+            backupReady = true;
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+        }
         await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler', progress: 5, message: 'Fetching the target HTML' });
         let targetUrl = new URL(job.url);
         // Capture the user's own authenticated browser BEFORE fetching protected HTML.
@@ -540,7 +573,8 @@ const runCloneJob = async (projectId, job) => {
             await fs.writeFile(localPath, applyRewritePlan(css, plan));
         }
         await fs.writeFile(path.join(packageDirectory, 'index.html'), html);
-        const report = { url: job.url, fetchedAt: new Date().toISOString(), assetsDownloaded: downloadedLocals.length, warnings, limitations: ['Static HTML/assets and CSS dependencies are mirrored; JavaScript-loaded resources, authenticated content, CORS restrictions, and server-side routes may still require browser-specific handling.'] };
+        const safeWarnings = job.interactiveLogin ? warnings.map(redactUrlText) : warnings;
+        const report = { url: safeCaptureUrl(job.url, job.interactiveLogin), fetchedAt: new Date().toISOString(), assetsDownloaded: downloadedLocals.length, warnings: safeWarnings, limitations: ['Static HTML/assets and CSS dependencies are mirrored; JavaScript-loaded resources, authenticated content, CORS restrictions, and server-side routes may still require browser-specific handling.'] };
         await fs.writeFile(path.join(directory, 'source', 'clone-report.json'), `${JSON.stringify(report, null, 2)}\n`);
         await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler+playwright', progress: 92, message: 'Capturing the rendered page with Playwright' });
         browserCapture = browserCapture || await runBrowserCapture(projectId, job, directory);
@@ -555,6 +589,9 @@ const runCloneJob = async (projectId, job) => {
                 capturedModels = runtimeCapture.models || [];
                 report.modelAssets = capturedModels;
                 report.canvasHints = runtimeCapture.canvasHints || [];
+                if (report.canvasHints.length && capturedModels.length === 0) {
+                    warnings.push('A canvas/WebGL surface was detected, but no exportable 3D model file was observed. The rendered scene geometry cannot be reconstructed from this capture.');
+                }
                 const sourceOrigin = targetUrl.origin;
                 const rewritePaths = new Map();
                 for (const item of runtimeAssets) {
@@ -735,14 +772,14 @@ const runCloneJob = async (projectId, job) => {
             }
         }
         report.assetsDownloaded = downloadedLocals.length;
-        report.warnings = warnings;
+        report.warnings = job.interactiveLogin ? warnings.map(redactUrlText) : warnings;
         await fs.writeFile(path.join(directory, 'source', 'clone-report.json'), `${JSON.stringify(report, null, 2)}\n`);
         const project = await readProject(projectId);
-        const nextProject = { ...project, sourceUrl: job.url, updatedAt: new Date().toISOString(), phase: 'browser-capture-ready', previewUrl: `/projects/${projectId}/website-package/index.html`, screenshotUrl: browserCapture.ok ? `/projects/${projectId}/previews/browser-capture.png` : null, motionUrl: motionCapture.ok ? motionCapture.url : null, splineRuntimeUrl: splineRuntime.ok ? splineRuntime.runtimeUrl : null, lastCloneJobId: job.id };
+        const nextProject = { ...project, sourceUrl: safeCaptureUrl(job.url, job.interactiveLogin), updatedAt: new Date().toISOString(), phase: 'browser-capture-ready', previewUrl: `/projects/${projectId}/website-package/index.html`, screenshotUrl: browserCapture.ok ? `/projects/${projectId}/previews/browser-capture.png` : null, motionUrl: motionCapture.ok ? motionCapture.url : null, splineRuntimeUrl: splineRuntime.ok ? splineRuntime.runtimeUrl : null, lastCloneJobId: job.id };
         const manifest = {
             version: 1,
             projectId,
-            sourceUrl: job.url,
+            sourceUrl: safeCaptureUrl(job.url, job.interactiveLogin),
             packageRoot: `/projects/${projectId}/website-package/`,
             indexUrl: `/projects/${projectId}/website-package/index.html`,
             renderedUrl: browserCapture.ok ? `/projects/${projectId}/website-package/rendered.html` : null,
@@ -765,7 +802,14 @@ const runCloneJob = async (projectId, job) => {
                 ? `Static package ready with ${downloadedLocals.length} local assets; rendered capture saved${motionCapture.ok ? ' (motion recording retained separately)' : ''}`
                 : `Static package ready with ${downloadedLocals.length} local assets; browser capture unavailable`);
         await writeJobStatus(projectId, job.id, { status: 'completed', worker: workerName, progress: 100, message, warnings, modelAssetCount: capturedModels.length, previewUrl: nextProject.previewUrl, screenshotUrl: nextProject.screenshotUrl, motionUrl: nextProject.motionUrl, splineRuntime: splineRuntime.ok ? 'completed' : 'unavailable', browserCapture: browserCapture.ok ? 'completed' : 'unavailable', motionCapture: motionCapture.ok ? 'reference-captured' : (motionCapture.skipped ? 'not-needed' : 'unavailable') });
+        await fs.rm(previousPackage, { recursive: true, force: true });
     } catch (error) {
+        if (hadUsablePackage && backupReady) {
+            await fs.rm(packageDirectory, { recursive: true, force: true });
+            await fs.rename(previousPackage, packageDirectory);
+        } else if (!hadUsablePackage) {
+            await fs.rm(packageDirectory, { recursive: true, force: true });
+        }
         await writeJobStatus(projectId, job.id, { status: 'failed', worker: 'local-static-crawler', progress: 100, message: error.message, error: error.message, warnings });
     }
 };
@@ -1027,7 +1071,7 @@ const server = createServer(async (request, response) => {
                     sendJson(response, 409, { error: job.conflict });
                     return;
                 }
-                sendJson(response, 202, { job });
+                sendJson(response, 202, { job: { ...job, url: safeCaptureUrl(job.url, job.interactiveLogin) } });
                 void runCloneJob(projectId, job);
                 return;
             }

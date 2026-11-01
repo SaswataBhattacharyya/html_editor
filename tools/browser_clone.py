@@ -12,6 +12,47 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 
+MODEL_EXTENSIONS = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode"}
+
+
+def capture_model_download(download, capture_dir, safe_url, remaining_bytes, asset_limit_reached=False):
+    """Persist a user-triggered 3D download within the clone package."""
+    if asset_limit_reached:
+        return None
+    suggested = Path(download.suggested_filename).name
+    extension = Path(suggested).suffix.lower()
+    if extension not in MODEL_EXTENSIONS:
+        return None
+    digest = hashlib.sha256(download.url.encode("utf-8")).hexdigest()[:16]
+    safe_name = "".join(c for c in Path(suggested).stem if c.isalnum() or c in "._-")[:100] or "model"
+    relative = Path("assets") / "downloads" / f"{safe_name}-{digest}{extension}"
+    root = Path(capture_dir).resolve()
+    target = (root / relative).resolve()
+    if not target.is_relative_to(root):
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    download.save_as(str(target))
+    size = target.stat().st_size
+    if size > remaining_bytes:
+        target.unlink(missing_ok=True)
+        return None
+    if extension == ".glb":
+        with target.open("rb") as stream:
+            if stream.read(4) != b"glTF":
+                target.unlink(missing_ok=True)
+                return None
+    return {
+        "url": safe_url(download.url),
+        "path": relative.as_posix(),
+        "bytes": size,
+        "contentType": "application/octet-stream",
+        "status": 200,
+        "external": False,
+        "is3d": True,
+        "download": True,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True)
@@ -61,8 +102,9 @@ def main():
             return parsed._replace(query="", fragment="").geturl() if args.interactive_login else value
         capture_bytes = 0
         capture_count = 0
-        model_extensions = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode"}
+        model_extensions = MODEL_EXTENSIONS
         seen_assets = set()
+        pending_downloads = []
         max_capture_assets = int(os.environ.get("BROWSER_CAPTURE_MAX_ASSETS", "300"))
         max_capture_bytes = int(os.environ.get("BROWSER_CAPTURE_MAX_BYTES", str(200 * 1024 * 1024)))
         if scene_dir:
@@ -77,10 +119,16 @@ def main():
                 parsed = urlparse(response.url)
                 extension = Path(parsed.path).suffix.lower()
                 content_type = response.headers.get("content-type", "").lower()
+                content_disposition = response.headers.get("content-disposition", "").lower()
                 is_model = extension in model_extensions or "model/gltf" in content_type
+                generic_binary = content_type.split(";", 1)[0].strip() in {
+                    "application/octet-stream", "binary/octet-stream"
+                }
                 same_origin = parsed.netloc == capture_origin or (args.interactive_login and parsed.netloc == urlparse(page.url).netloc)
-                if (response.status != 200 or not (same_origin or is_model) or
+                if (response.status != 200 or not (same_origin or is_model or generic_binary) or
                         request.resource_type in {"document", "websocket", "eventsource"} or
+                        (args.interactive_login and request.resource_type in {"fetch", "xhr"} and not (is_model or generic_binary)) or
+                        "attachment" in content_disposition or
                         capture_count >= max_capture_assets or capture_bytes >= max_capture_bytes):
                     return
                 # Capture cross-origin responses ONLY for recognized 3D file formats.
@@ -91,6 +139,13 @@ def main():
                 if identity in seen_assets and not (args.interactive_login and request.resource_type in {"fetch", "xhr"}):
                     return
                 try:
+                    # Some CDNs return GLB with a signed, extensionless URL and a
+                    # generic binary MIME type. Inspect only bounded binary
+                    # responses from cross-origin hosts; persist them only when
+                    # the GLB magic bytes prove that they are model files.
+                    content_length = int(response.headers.get("content-length", "0") or 0)
+                    if not same_origin and not is_model and generic_binary and content_length > max_capture_bytes - capture_bytes:
+                        return
                     body = response.body()
                     if len(body) > max_capture_bytes - capture_bytes:
                         return
@@ -98,6 +153,12 @@ def main():
                         is_model = True
                         if not extension:
                             extension = ".glb"
+                    # Authenticated fetch/XHR bodies can contain private profile,
+                    # project, or API data. Persist only validated 3D payloads.
+                    if args.interactive_login and request.resource_type in {"fetch", "xhr"} and not is_model:
+                        return
+                    if not same_origin and not is_model:
+                        return
                     if extension == ".glb" and body[:4] != b"glTF":
                         return  # Reject mislabeled HTML/API responses.
                     if same_origin:
@@ -132,6 +193,10 @@ def main():
                 except Exception as error:
                     runtime_assets.append({"url": safe_url, "error": str(error)})
 
+            # Playwright callbacks should only retain the completed Download
+            # handle. Persist it after the event loop returns; calling
+            # download.save_as() inside a sync callback can deadlock.
+            page.on("download", lambda download: pending_downloads.append(download))
             page.on("response", capture_runtime_asset)
 
         page.on("requestfailed", lambda request: failed_requests.append({
@@ -183,6 +248,7 @@ def main():
                 page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
                 pass  # Websocket/long-polling apps may never become network-idle.
+            page.wait_for_timeout(1000)
         # Spline's canvas can finish loading after networkidle. Give its
         # runtime a short window to request .splinecode and WASM resources.
         if scene_dir:
@@ -215,6 +281,20 @@ def main():
             except Exception as error:
                 interaction_trace.append({"type": "click", "target": "Dance Loop", "error": str(error)})
         page.wait_for_timeout(300)
+        for download in pending_downloads:
+            try:
+                record = capture_model_download(
+                    download, capture_dir, report_url,
+                    max_capture_bytes - capture_bytes,
+                    asset_limit_reached=capture_count >= max_capture_assets,
+                )
+                if record:
+                    capture_bytes += record["bytes"]
+                    capture_count += 1
+                    runtime_assets.append(record)
+                    model_assets.append(record)
+            except Exception as error:
+                runtime_assets.append({"url": report_url(download.url), "error": str(error)})
         page.screenshot(path=str(screenshot_path), full_page=True)
         html_path.write_text(page.content(), encoding="utf-8")
         scene_hints = page.evaluate("""() => Array.from(document.querySelectorAll('canvas')).map(c => ({
@@ -225,7 +305,7 @@ def main():
         }))""")
         # A canvas is evidence of rendering, NOT proof that mesh export is possible.
         report = {
-            "url": args.url,
+            "url": report_url(args.url),
             "title": page.title(),
             "status": response.status if response else None,
             "finalUrl": report_url(page.url),

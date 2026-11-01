@@ -52,3 +52,13 @@ Current flow captures the **one current page** in the interactive browser. For u
 - A local clone displays the expected web content and compatible GLB-loaded 3D scene. Clearly report when full WebGL extraction is unsupported.
 - Screenshots/console/network traces compared for source vs clone, with no unapproved external network side effects.
 - Apply and commit fixes to this feature branch; send a detailed summary of tested platforms, passing/failing cases, edited files and any remaining restrictions. Open or update PR for review; **do not merge directly into main**.
+
+## Validation progress (2026-11-01)
+
+- Checked out `feature/authenticated-3d-clone` and reviewed this handoff, the runtime cloning skill, the failure analysis, README, and the implementation already present on the branch.
+- Added Playwright-backed local coverage for extensionless cross-origin GLB responses, rejection of unrelated binary data, download path safety, GLB signature checking, size limits, and query-string redaction. Four tests pass using `/snap/bin/chromium`.
+- Authenticated capture now discards ordinary fetch/XHR response bodies and retains only validated 3D payloads. Authenticated refreshes back up an existing usable package and restore it if cloning fails. Canvas-only captures are explicitly reported as lacking an exportable model.
+- Playwright smoke check against the host editor passed: clone URL and interactive-login controls were present, Continue was hidden before a job, and there were no frontend page errors.
+- Blender is not installed in the current host environment, so Blender import validation remains pending.
+- A real Meshy capture was launched on host port `3001`: project `meshy-authenticated-rig-validation-1885d394`, job `1793540866053-84b928c6`. It is waiting at `awaiting-login`. The account owner must sign in and invoke Meshy’s normal model export in the visible Chromium window; then the job can be continued and the captured file inspected. No password, cookies, or storage state are requested or saved.
+- The live job was started before the latest backend privacy/package-preservation edits and must be restarted for those server-side edits to apply to an end-to-end acceptance run. Do not claim the Meshy asset extraction passed until a fresh job completes and its file has been inspected.

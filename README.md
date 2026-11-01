@@ -24,10 +24,10 @@ For a site **you own or are authorized to reproduce**, check
 Chromium window opens on the computer running `server.mjs`. Sign in yourself,
 navigate to the desired page and click **Continue after login** in the editor.
 The Playwright browser keeps its cookies only in memory and closes when done;
-credentials and session-state files are not intentionally saved. **However, the
-captured HTML, XHR responses and screenshots can contain sensitive account
-data**. Treat the `projects/` directory as private and do not share captures
-without reviewing them.
+credentials and session-state files are not intentionally saved. Authenticated
+fetch/XHR data is saved only when it validates as a supported 3D asset, but the
+captured HTML and screenshots can still show private account data. Treat the
+`projects/` directory as private and review it before sharing.
 
 ### Local setup
 
@@ -123,4 +123,4 @@ npm run build
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
