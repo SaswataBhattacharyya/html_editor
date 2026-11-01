@@ -3,6 +3,7 @@ const THEME_KEY = 'html-editor.theme';
 let backendProjects = [];
 let animationPlan = null;
 let clonePollToken = 0;
+let activeLoginJobId = null;
 
 const byId = (id) => document.getElementById(id);
 
@@ -204,6 +205,8 @@ const handleCloneRequest = async () => {
     const input = byId('clone-url');
     const status = byId('clone-status');
     const url = input?.value.trim() || '';
+    byId('clone-login-continue').hidden = true;
+    activeLoginJobId = null;
 
     if (!validateUrl(url)) {
         setStatus(status, 'Enter a complete http:// or https:// website URL.', { error: true });
@@ -252,17 +255,40 @@ const handleCloneRequest = async () => {
         const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}/clone`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ url })
+            body: JSON.stringify({ url, interactiveLogin: Boolean(byId('clone-interactive-login')?.checked) })
         });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || `Clone API returned ${response.status}`);
         const job = payload.job;
+        activeLoginJobId = job.interactiveLogin ? job.id : null;
         updateCloneProgress(job);
         setStatus(status, `${createdForUrl ? 'Created a separate project to preserve the previous clone. ' : ''}Clone job ${job.id} queued. Local worker started.`, { loading: true });
         pollCloneJob(project.id, job.id);
         return;
     } catch (error) {
         setStatus(status, `Could not start clone: ${error.message}`, { error: true });
+    }
+};
+
+const handleLoginContinue = async () => {
+    const id = window.workbenchProject?.id;
+    const status = byId('clone-status');
+    if (!id || !activeLoginJobId) {
+        setStatus(status, 'No clone job is awaiting a login.', { error: true });
+        return;
+    }
+    const button = byId('clone-login-continue');
+    button.disabled = true;
+    try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(id)}/jobs/${encodeURIComponent(activeLoginJobId)}/continue-login`, { method: 'POST' });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        button.hidden = true;
+        setStatus(status, 'Capturing the page using the session in your Chromium window…', { loading: true });
+    } catch (error) {
+        setStatus(status, `Could not continue login capture: ${error.message}`, { error: true });
+    } finally {
+        button.disabled = false;
     }
 };
 
@@ -278,16 +304,25 @@ const pollCloneJob = async (projectId, jobId) => {
             const payload = await response.json();
             const job = payload.job;
             updateCloneProgress(job);
+            if (job.status === 'awaiting-login') {
+                activeLoginJobId = job.id;
+                byId('clone-login-continue').hidden = false;
+                setStatus(status, 'A Chromium window should now be open on this computer. Sign in, navigate to the page you want, then click Continue after login.', { loading: true });
+                continue;
+            }
+            byId('clone-login-continue').hidden = true;
             if (job.status === 'completed') {
                 const project = { ...window.workbenchProject, previewUrl: job.previewUrl, screenshotUrl: job.screenshotUrl, phase: 'browser-capture-ready', lastCloneJobId: job.id };
                 window.workbenchProject = project;
                 const projects = readProjects().map((item) => item.id === project.id ? project : item);
                 writeProjects(projects);
-                setStatus(status, `Clone ready: ${job.message}. Open the preview or rendered capture.`);
+                activeLoginJobId = null;
+                setStatus(status, `Clone ready: ${job.message}. 3D files captured: ${job.modelAssetCount || 0}. Open the preview or rendered capture.`);
                 updateCloneProgress(job);
                 return;
             }
             if (job.status === 'failed') {
+                activeLoginJobId = null;
                 setStatus(status, `Clone failed: ${job.message}`, { error: true });
                 updateCloneProgress(job);
                 return;
@@ -448,6 +483,7 @@ const initWorkbench = () => {
     });
 
     byId('clone-button')?.addEventListener('click', handleCloneRequest);
+    byId('clone-login-continue')?.addEventListener('click', handleLoginContinue);
     byId('load-project-button')?.addEventListener('click', openProjectDialog);
     byId('preview-button')?.addEventListener('click', handlePreviewRequest);
     byId('capture-button')?.addEventListener('click', handleCaptureRequest);
