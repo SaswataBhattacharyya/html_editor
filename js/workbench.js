@@ -186,6 +186,20 @@ const validateUrl = (value) => {
     }
 };
 
+const normalizeCloneUrl = (value) => {
+    const url = new URL(value);
+    url.hash = '';
+    if (url.pathname !== '/') url.pathname = `${url.pathname.replace(/\/+$/, '')}/`;
+    return url.href;
+};
+
+const cloneProjectName = (value) => {
+    const url = new URL(value);
+    const host = url.hostname.replace(/^www\./i, '');
+    const page = url.pathname.split('/').filter(Boolean).at(-1);
+    return page ? `${host} – ${page}` : host;
+};
+
 const handleCloneRequest = async () => {
     const input = byId('clone-url');
     const status = byId('clone-status');
@@ -197,12 +211,36 @@ const handleCloneRequest = async () => {
         return;
     }
 
-    const projects = readProjects();
-    const project = window.workbenchProject || projects.find((item) => item.sourceUrl === url);
+    const projects = backendProjects.length ? backendProjects : readProjects();
+    const requestedUrl = normalizeCloneUrl(url);
+    let project = projects.find((item) => item.sourceUrl && normalizeCloneUrl(item.sourceUrl) === requestedUrl);
+    let createdForUrl = false;
+    if (!project) project = window.workbenchProject || null;
     if (!project) {
         setStatus(status, 'Create or load a project first. The clone worker will write only inside the active project.', { error: true });
         openProjectDialog();
         return;
+    }
+
+    if (project.sourceUrl && normalizeCloneUrl(project.sourceUrl) !== requestedUrl) {
+        try {
+            const createResponse = await fetch('/api/projects', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ name: cloneProjectName(url), sourceUrl: url })
+            });
+            if (!createResponse.ok) throw new Error(`Project API returned ${createResponse.status}`);
+            project = (await createResponse.json()).project;
+            backendProjects = [project, ...backendProjects.filter((item) => item.id !== project.id)];
+            writeProjects(backendProjects);
+            selectProject(project);
+            createdForUrl = true;
+        } catch (error) {
+            setStatus(status, `Could not create a separate project for this URL: ${error.message}`, { error: true });
+            return;
+        }
+    } else if (project.id !== window.workbenchProject?.id) {
+        selectProject(project);
     }
 
     project.sourceUrl = url;
@@ -216,15 +254,15 @@ const handleCloneRequest = async () => {
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ url })
         });
-        if (!response.ok) throw new Error(`Clone API returned ${response.status}`);
         const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `Clone API returned ${response.status}`);
         const job = payload.job;
         updateCloneProgress(job);
-        setStatus(status, `Clone job ${job.id} queued. Local worker started.`, { loading: true });
+        setStatus(status, `${createdForUrl ? 'Created a separate project to preserve the previous clone. ' : ''}Clone job ${job.id} queued. Local worker started.`, { loading: true });
         pollCloneJob(project.id, job.id);
         return;
     } catch (error) {
-        setStatus(status, `Clone metadata saved locally, but the backend worker could not be reached: ${error.message}`, { error: true });
+        setStatus(status, `Could not start clone: ${error.message}`, { error: true });
     }
 };
 
@@ -294,21 +332,6 @@ const handleImportRequest = async () => {
         const html = await htmlResponse.text();
         const documentFragment = new DOMParser().parseFromString(html, 'text/html');
         const packageBase = new URL(manifest.indexUrl, window.location.href);
-        if (manifest.motionUrl) {
-            const hero = documentFragment.querySelector('main > section');
-            if (hero) {
-                hero.classList.add('html-editor-motion-hero');
-                const motionVideo = documentFragment.createElement('video');
-                motionVideo.className = 'html-editor-motion-video';
-                motionVideo.src = new URL(manifest.motionUrl, window.location.href).href;
-                motionVideo.autoplay = true;
-                motionVideo.loop = true;
-                motionVideo.muted = true;
-                motionVideo.playsInline = true;
-                motionVideo.setAttribute('aria-hidden', 'true');
-                hero.prepend(motionVideo);
-            }
-        }
         documentFragment.querySelectorAll('[src], [poster]').forEach((element) => {
             for (const attribute of ['src', 'poster']) {
                 const value = element.getAttribute(attribute);
@@ -324,7 +347,6 @@ const handleImportRequest = async () => {
                 console.info('[workbench] stylesheet import skipped:', error.message);
             }
         }
-        if (manifest.motionUrl) styles.push('.html-editor-motion-hero{position:relative;overflow:hidden}.html-editor-motion-hero>.html-editor-motion-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;pointer-events:none}.html-editor-motion-hero> :not(.html-editor-motion-video){position:relative;z-index:1}.html-editor-motion-hero canvas{display:none!important}');
         window.htmlEditor.setComponents(documentFragment.body?.innerHTML || html);
         if (styles.length) window.htmlEditor.setStyle(styles.join('\n'));
         setStatus(status, `Imported clone package into the editor: ${manifest.assets.length} local assets referenced.`);

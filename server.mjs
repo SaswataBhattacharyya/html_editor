@@ -207,9 +207,24 @@ const createProject = async (payload) => {
     return project;
 };
 
+const normalizeCloneUrl = (value) => {
+    const url = new URL(value);
+    url.hash = '';
+    if (url.pathname !== '/') url.pathname = `${url.pathname.replace(/\/+$/, '')}/`;
+    return url.href;
+};
+
 const createCloneJob = async (projectId, payload) => {
     const project = await readProject(projectId);
     if (!project) return null;
+    try {
+        const manifest = JSON.parse(await fs.readFile(path.join(projectPath(projectId), 'website-package', 'manifest.json'), 'utf8'));
+        if (manifest.sourceUrl && normalizeCloneUrl(manifest.sourceUrl) !== normalizeCloneUrl(payload.url)) {
+            return { conflict: `This project already contains ${manifest.sourceUrl}. Create or load a separate project for ${payload.url}.` };
+        }
+    } catch (error) {
+        if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+    }
     const jobId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const jobDirectory = path.join(projectPath(projectId), 'jobs', jobId);
     const now = new Date().toISOString();
@@ -256,11 +271,6 @@ const downloadUrlForAsset = (url) => {
     return url;
 };
 
-const fileNameForUrl = (url, index) => {
-    const base = path.basename(url.pathname).replace(/[^a-z0-9._-]/gi, '_').slice(0, 80) || `asset-${index}`;
-    return `${String(index).padStart(3, '0')}-${base}`;
-};
-
 const isPublicMediaAsset = (url) => /\.(?:avif|bmp|css|gif|ico|jpe?g|mjs|mp3|mp4|ogg|png|svg|webm|webp|woff2?|ttf|otf)(?:$|[?#])/i.test(url.pathname);
 const splineRuntimeUrl = 'https://unpkg.com/@splinetool/runtime@1.10.89/build/runtime.js';
 
@@ -275,13 +285,39 @@ const extractAssetReferences = (html, pageUrl) => {
     }
     for (const match of html.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) values.push(match[1]);
     const seen = new Set();
-    return values.map((value) => absoluteAssetUrl(value, pageUrl)).filter((url) => {
+    return values.map((value) => ({ raw: value.trim(), url: absoluteAssetUrl(value.trim(), pageUrl) })).filter(({ raw, url }) => {
         // A page's own canonical/root URL is a navigation link, not a
         // downloadable asset. In particular, replacing `/` globally would
         // corrupt every path in a root-page clone.
-        if (!url || url.href === page.href || (url.origin === page.origin && url.pathname === '/' && !url.search && !url.hash)) return false;
-        if (seen.has(url.href)) return false;
-        seen.add(url.href);
+        if (!url || url.href === page.href || (url.origin === page.origin && url.pathname === page.pathname && !url.search)) return false;
+        if (url.origin === page.origin && url.pathname === '/' && !url.search && !url.hash) return false;
+        const key = `${url.href}\n${raw}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+};
+
+const safePackagePath = (url) => {
+    const decoded = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+    const normalized = path.posix.normalize(decoded);
+    const relative = url.pathname.endsWith('/') ? path.posix.join(normalized, 'index.html') : normalized;
+    if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
+        throw new Error(`Asset path escapes the clone package: ${url.pathname}`);
+    }
+    return relative;
+};
+
+const cssAssetReferences = (css, pageUrl) => {
+    const values = [];
+    for (const match of css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) values.push(match[1].trim());
+    for (const match of css.matchAll(/@import\s+(?:url\(\s*)?["']([^"']+)["']\s*\)?/gi)) values.push(match[1].trim());
+    const seen = new Set();
+    return values.map((raw) => ({ raw, url: absoluteAssetUrl(raw, pageUrl) })).filter(({ raw, url }) => {
+        if (!url || url.protocol === 'data:' || url.href === pageUrl) return false;
+        const key = `${url.href}\n${raw}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
         return true;
     });
 };
@@ -304,7 +340,9 @@ const runBrowserCapture = (projectId, job, directory) => new Promise((resolve) =
         '--screenshot', path.join(directory, 'previews', 'browser-capture.png'),
         '--report', path.join(directory, 'source', 'browser-report.json'),
         '--scene-dir', sceneDirectory,
-        '--scene-report', path.join(directory, 'source', 'spline-scenes.json')
+        '--scene-report', path.join(directory, 'source', 'spline-scenes.json'),
+        '--capture-assets-dir', packageDirectory,
+        '--runtime-assets-report', path.join(directory, 'source', 'runtime-assets.json')
     ];
     const child = spawn(process.env.PYTHON_BIN || 'python3', args, { cwd: rootDir, env: process.env });
     let stderr = '';
@@ -346,12 +384,6 @@ const captureSplineRuntime = async (directory, projectId) => {
     };
 };
 
-const injectMotionReplay = (html) => {
-    const style = `<style id="html-editor-motion-replay">.html-editor-motion-hero{position:relative;overflow:hidden}.html-editor-motion-hero>.html-editor-motion-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;pointer-events:none}.html-editor-motion-hero> :not(.html-editor-motion-video){position:relative;z-index:1}.html-editor-motion-hero canvas{display:none!important}</style>`;
-    const script = `<script id="html-editor-motion-replay-script">(()=>{const hero=document.querySelector('main > section');if(!hero||hero.querySelector('.html-editor-motion-video'))return;hero.classList.add('html-editor-motion-hero');const video=document.createElement('video');video.className='html-editor-motion-video';video.src='assets/hero-motion.mp4';video.autoplay=true;video.loop=true;video.muted=true;video.playsInline=true;video.setAttribute('aria-hidden','true');hero.prepend(video);video.play().catch(()=>{});})();</script>`;
-    return html.replace('</head>', `${style}</head>`).replace('</body>', `${script}</body>`);
-};
-
 const injectSplineRuntime = (html) => {
     const style = `<style id="html-editor-spline-runtime-style">.html-editor-spline-runtime-hero{position:relative;overflow:hidden;isolation:isolate}.html-editor-spline-runtime-hero .html-editor-spline-runtime-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0;pointer-events:auto}.html-editor-spline-runtime-hero> :not(.html-editor-spline-runtime-canvas){position:relative;z-index:1}.html-editor-spline-runtime-hero .html-editor-motion-video{display:none!important}.html-editor-spline-runtime-status{position:absolute;left:-99999px;width:1px;height:1px;overflow:hidden}</style>`;
     const script = `<script type="module" id="html-editor-spline-runtime-script">(()=>{const hero=document.querySelector('main > section');if(!hero||hero.querySelector('.html-editor-spline-runtime-canvas'))return;hero.classList.add('html-editor-spline-runtime-hero');const canvas=document.createElement('canvas');canvas.className='html-editor-spline-runtime-canvas';canvas.setAttribute('aria-label','Interactive Spline scene');canvas.setAttribute('role','img');hero.prepend(canvas);const status=document.createElement('span');status.className='html-editor-spline-runtime-status';status.setAttribute('aria-live','polite');status.textContent='Loading interactive 3D scene';hero.append(status);const forwardPointer=(event)=>{if(event.target===canvas)return;const rect=canvas.getBoundingClientRect();if(event.clientX>=rect.left&&event.clientX<=rect.right&&event.clientY>=rect.top&&event.clientY<=rect.bottom){canvas.dispatchEvent(new PointerEvent(event.type,{bubbles:true,clientX:event.clientX,clientY:event.clientY,pointerId:event.pointerId,pointerType:event.pointerType,buttons:event.buttons}))}};window.addEventListener('pointermove',forwardPointer,{passive:true});window.addEventListener('pointerdown',forwardPointer,{passive:true});window.addEventListener('pointerup',forwardPointer,{passive:true});window.addEventListener('scroll',()=>{canvas.dataset.scrollY=String(window.scrollY);window.dispatchEvent(new CustomEvent('html-editor-spline-scroll',{detail:{scrollY:window.scrollY}}))},{passive:true});import('./assets/spline-runtime.js').then(({Application})=>{const app=new Application(canvas);window.htmlEditorSpline={app,canvas,sceneUrl:'spline-scenes/scene-00.splinecode'};return app.load('spline-scenes/scene-00.splinecode')}).then(()=>{status.textContent='Interactive 3D scene ready';window.dispatchEvent(new CustomEvent('html-editor-spline-ready'))}).catch(error=>{console.error('[html-editor] Spline runtime failed',error);status.textContent='Interactive 3D scene unavailable';canvas.remove();hero.classList.remove('html-editor-spline-runtime-hero')})})();</script>`;
@@ -376,16 +408,26 @@ const runCloneJob = async (projectId, job) => {
         await fs.writeFile(path.join(directory, 'source', 'raw.html'), html);
         const assetGroups = new Map();
         for (const reference of extractAssetReferences(html, targetUrl.href)) {
-            const downloadUrl = downloadUrlForAsset(reference);
+            const downloadUrl = downloadUrlForAsset(reference.url);
             const key = downloadUrl.href;
             if (!assetGroups.has(key)) assetGroups.set(key, { downloadUrl, references: [] });
-            assetGroups.get(key).references.push(reference);
+            assetGroups.get(key).references.push({ ...reference, parentLocal: null });
         }
-        const assets = [...assetGroups.values()].slice(0, cloneLimits.assets);
+        const assets = [...assetGroups.values()];
+        const enqueueAsset = (downloadUrl, reference) => {
+            const key = downloadUrl.href;
+            let group = assetGroups.get(key);
+            if (!group) {
+                group = { downloadUrl, references: [] };
+                assetGroups.set(key, group);
+                assets.push(group);
+            }
+            group.references.push(reference);
+        };
         let totalBytes = page.bytes.length;
-        const replacements = [];
-        const downloadedAssets = [];
-        for (let index = 0; index < assets.length; index += 1) {
+        const rewritePlans = new Map();
+        const downloadedLocals = [];
+        for (let index = 0; index < assets.length && index < cloneLimits.assets; index += 1) {
             const { downloadUrl, references } = assets[index];
             if (downloadUrl.origin !== targetUrl.origin && !isPublicMediaAsset(downloadUrl)) {
                 warnings.push(`Skipped cross-origin asset: ${downloadUrl.href}`);
@@ -398,31 +440,34 @@ const runCloneJob = async (projectId, job) => {
             try {
                 const asset = await fetchBytes(downloadUrl.href);
                 totalBytes += asset.bytes.length;
-                const assetName = fileNameForUrl(downloadUrl, index);
-                await fs.writeFile(path.join(assetDirectory, assetName), asset.bytes);
-                const local = `assets/${assetName}`;
-                downloadedAssets.push({ downloadUrl: downloadUrl.href, local, filePath: path.join(assetDirectory, assetName) });
+                const local = safePackagePath(downloadUrl);
+                const localPath = path.resolve(packageDirectory, local);
+                if (!localPath.startsWith(`${path.resolve(packageDirectory)}${path.sep}`)) throw new Error(`Asset path escapes the clone package: ${downloadUrl.pathname}`);
+                await fs.mkdir(path.dirname(localPath), { recursive: true });
+                await fs.writeFile(localPath, asset.bytes);
+                downloadedLocals.push(local);
                 for (const reference of references) {
-                    replacements.push([reference.href, local]);
-                    const relative = reference.href.replace(targetUrl.origin, '');
-                    if (relative && relative !== '/') replacements.push([relative, local]);
+                    const parentLocal = reference.parentLocal;
+                    let localReference = local;
+                    if (parentLocal) {
+                        localReference = path.posix.relative(path.posix.dirname(parentLocal), local) || path.posix.basename(local);
+                        if (!localReference.startsWith('.')) localReference = `./${localReference}`;
+                    }
+                    const planKey = parentLocal || '';
+                    if (!rewritePlans.has(planKey)) rewritePlans.set(planKey, []);
+                    rewritePlans.get(planKey).push([reference.raw, localReference]);
+                    rewritePlans.get(planKey).push([reference.url.href, localReference]);
                 }
-                replacements.push([downloadUrl.href, local]);
+                if (/\.css(?:$|[?#])/i.test(downloadUrl.href) || /text\/css/i.test(asset.contentType)) {
+                    for (const reference of cssAssetReferences(asset.bytes.toString('utf8'), downloadUrl.href)) {
+                        const childUrl = downloadUrlForAsset(reference.url);
+                        enqueueAsset(childUrl, { ...reference, parentLocal: local });
+                    }
+                }
             } catch (error) {
                 warnings.push(`Could not download ${downloadUrl.href}: ${error.message}`);
             }
             await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler', progress: Math.min(90, 10 + Math.round(((index + 1) / Math.max(assets.length, 1)) * 75)), message: `Downloaded ${index + 1}/${assets.length} referenced assets` });
-        }
-        // HTML module scripts commonly import sibling files using their
-        // original basename. The crawler prefixes downloaded files to keep
-        // names unique, so also publish safe basename aliases for local
-        // module dependencies instead of leaving the browser with broken
-        // imports such as ./index-e4482d9c.js.
-        for (const asset of downloadedAssets) {
-            const base = path.basename(new URL(asset.downloadUrl).pathname);
-            if (!base || base === path.basename(asset.filePath) || !/^[a-z0-9._-]+$/i.test(base)) continue;
-            const aliasPath = path.join(assetDirectory, base);
-            try { await fs.access(aliasPath); } catch { await fs.copyFile(asset.filePath, aliasPath); }
         }
         // Replace the most specific paths first. Otherwise a short route such
         // as /community can corrupt a longer media path such as
@@ -437,18 +482,148 @@ const runCloneJob = async (projectId, job) => {
             const boundary = remote.endsWith('/') ? '(?![a-z0-9_-])' : '(?![a-z0-9_/-])';
             return source.replace(new RegExp(escaped + boundary, 'gi'), local);
         };
-        for (const [remote, local] of [...replacements].sort((a, b) => b[0].length - a[0].length)) {
-            html = replaceLiteral(html, remote, local);
-            const relative = remote.replace(targetUrl.origin, '');
-            if (relative && relative !== '/') html = replaceLiteral(html, relative, local);
+        const applyRewritePlan = (source, plan) => [...plan].sort((a, b) => b[0].length - a[0].length).reduce((output, [remote, local]) => replaceLiteral(output, remote, local), source);
+        html = applyRewritePlan(html, rewritePlans.get('') || []);
+        for (const [local, plan] of rewritePlans) {
+            if (!local) continue;
+            const localPath = path.join(packageDirectory, local);
+            const css = await fs.readFile(localPath, 'utf8');
+            await fs.writeFile(localPath, applyRewritePlan(css, plan));
         }
         await fs.writeFile(path.join(packageDirectory, 'index.html'), html);
-        const report = { url: job.url, fetchedAt: new Date().toISOString(), assetsDownloaded: replacements.length, warnings, limitations: ['Static HTML/assets only; JavaScript execution, authenticated content, CORS restrictions, and server-side routes require the AI/browser worker.'] };
+        const report = { url: job.url, fetchedAt: new Date().toISOString(), assetsDownloaded: downloadedLocals.length, warnings, limitations: ['Static HTML/assets and CSS dependencies are mirrored; JavaScript-loaded resources, authenticated content, CORS restrictions, and server-side routes may still require browser-specific handling.'] };
         await fs.writeFile(path.join(directory, 'source', 'clone-report.json'), `${JSON.stringify(report, null, 2)}\n`);
         await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler+playwright', progress: 92, message: 'Capturing the rendered page with Playwright' });
         const browserCapture = await runBrowserCapture(projectId, job, directory);
         if (browserCapture.ok) {
             report.browserCapture = 'completed';
+            try {
+                const runtimeCapture = JSON.parse(await fs.readFile(path.join(directory, 'source', 'runtime-assets.json'), 'utf8'));
+                const runtimeAssets = runtimeCapture.assets || [];
+                report.runtimeAssetsCaptured = runtimeCapture.count || 0;
+                report.runtimeAssetBytes = runtimeCapture.bytes || 0;
+                const sourceOrigin = targetUrl.origin;
+                const rewritePaths = new Map();
+                for (const item of runtimeAssets) {
+                    if (!item.url || item.status !== 200) continue;
+                    const remoteUrl = new URL(item.url);
+                    if (remoteUrl.origin !== sourceOrigin) continue;
+                    const local = safePackagePath(remoteUrl);
+                    if (!downloadedLocals.includes(local)) downloadedLocals.push(local);
+                    const localUrl = `/projects/${projectId}/website-package/${local}`;
+                    rewritePaths.set(remoteUrl.pathname + remoteUrl.search, localUrl);
+                    rewritePaths.set(remoteUrl.pathname, localUrl);
+                    rewritePaths.set(remoteUrl.href, localUrl);
+                }
+                // Browser-captured apps commonly lazy-load JavaScript chunks
+                // only after a user opens a panel or starts an export. Walk
+                // same-origin ES module imports from captured scripts so these
+                // code paths remain available offline too.
+                const moduleQueue = runtimeAssets
+                    .filter((item) => item.url && item.status === 200 && /\.m?js(?:$|\?)/i.test(item.url))
+                    .map((item) => item.url);
+                const visitedModules = new Set();
+                const moduleLimit = Math.min(cloneLimits.assets, 300);
+                while (moduleQueue.length && visitedModules.size < moduleLimit) {
+                    const moduleHref = moduleQueue.shift();
+                    let moduleUrl;
+                    try { moduleUrl = new URL(moduleHref); } catch { continue; }
+                    if (moduleUrl.origin !== sourceOrigin || visitedModules.has(moduleUrl.href)) continue;
+                    visitedModules.add(moduleUrl.href);
+                    try {
+                        const moduleAsset = await fetchBytes(moduleUrl.href);
+                        if (!/javascript|ecmascript|text\/plain/i.test(moduleAsset.contentType || '')) continue;
+                        const moduleText = moduleAsset.bytes.toString('utf8');
+                        const imports = new Set();
+                        const importPatterns = [
+                            /\bimport\s*\(\s*(['"])([^'"]+)\1\s*\)/g,
+                            /\b(?:import|export)\s+(?:[^;'"()]*?\s+from\s*)?(['"])([^'"]+)\1/g
+                        ];
+                        for (const pattern of importPatterns) {
+                            for (const match of moduleText.matchAll(pattern)) imports.add(match[2]);
+                        }
+                        for (const specifier of imports) {
+                            if (!specifier.startsWith('.') && !specifier.startsWith('/')) continue;
+                            const dependency = new URL(specifier, moduleUrl);
+                            if (dependency.origin !== sourceOrigin || visitedModules.has(dependency.href)) continue;
+                            const local = safePackagePath(dependency);
+                            const localPath = path.resolve(packageDirectory, local);
+                            if (!localPath.startsWith(`${path.resolve(packageDirectory)}${path.sep}`)) continue;
+                            const asset = await fetchBytes(dependency.href);
+                            if (totalBytes + asset.bytes.length > cloneLimits.totalBytes) {
+                                warnings.push(`Stopped JavaScript module capture at the ${cloneLimits.totalBytes} byte total size limit.`);
+                                moduleQueue.length = 0;
+                                break;
+                            }
+                            totalBytes += asset.bytes.length;
+                            await fs.mkdir(path.dirname(localPath), { recursive: true });
+                            await fs.writeFile(localPath, asset.bytes);
+                            if (!downloadedLocals.includes(local)) downloadedLocals.push(local);
+                            const localUrl = `/projects/${projectId}/website-package/${local}`;
+                            rewritePaths.set(dependency.pathname + dependency.search, localUrl);
+                            rewritePaths.set(dependency.pathname, localUrl);
+                            rewritePaths.set(dependency.href, localUrl);
+                            moduleQueue.push(dependency.href);
+                        }
+                    } catch (error) {
+                        warnings.push(`Could not inspect JavaScript module ${moduleUrl.href}: ${error.message}`);
+                    }
+                }
+                report.runtimeModulesCaptured = visitedModules.size;
+                // ActionForge only requests a clip's GLB after that card is
+                // selected. Capture the complete public animation library
+                // from its manifest so any clip can play and export offline.
+                if (targetUrl.hostname === 'actionforge.app') {
+                    const manifestPath = path.join(packageDirectory, 'assets', 'animation-library', 'manifests', 'library.json');
+                    try {
+                        const library = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+                        const records = [
+                            ...Object.values(library.clips || {}),
+                            ...Object.values(library.rigs || {}),
+                            ...Object.values(library.props || {})
+                        ];
+                        const files = [...new Set(records.map((record) => record?.file).filter((file) => typeof file === 'string' && file.toLowerCase().includes('.glb')))];
+                        await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler+playwright', progress: 94, message: `Packaging ${files.length} ActionForge rig, prop, and animation models` });
+                        for (const file of files) {
+                            const remoteUrl = new URL(`/assets/animation-library/${file.replace(/^\/+/, '')}`, sourceOrigin);
+                            const local = safePackagePath(remoteUrl);
+                            const localPath = path.resolve(packageDirectory, local);
+                            if (!localPath.startsWith(`${path.resolve(packageDirectory)}${path.sep}`)) throw new Error(`Animation path escapes clone package: ${remoteUrl.pathname}`);
+                            try {
+                                const asset = await fetchBytes(remoteUrl.href);
+                                if (totalBytes + asset.bytes.length > cloneLimits.totalBytes) {
+                                    warnings.push(`Stopped ActionForge model capture at the ${cloneLimits.totalBytes} byte total size limit.`);
+                                    break;
+                                }
+                                totalBytes += asset.bytes.length;
+                                await fs.mkdir(path.dirname(localPath), { recursive: true });
+                                await fs.writeFile(localPath, asset.bytes);
+                                if (!downloadedLocals.includes(local)) downloadedLocals.push(local);
+                                const localUrl = `/projects/${projectId}/website-package/${local}`;
+                                rewritePaths.set(remoteUrl.pathname + remoteUrl.search, localUrl);
+                                rewritePaths.set(remoteUrl.pathname, localUrl);
+                                rewritePaths.set(remoteUrl.href, localUrl);
+                            } catch (error) {
+                                warnings.push(`Could not download ActionForge model ${remoteUrl.href}: ${error.message}`);
+                            }
+                        }
+                    } catch (error) {
+                        warnings.push(`Could not package ActionForge library models: ${error.message}`);
+                    }
+                }
+                // Keep JavaScript byte-for-byte intact. Rewriting substrings
+                // inside arbitrary JS literals can corrupt unrelated URLs
+                // (for example Three.js's http://www.w3.org namespace). The
+                // early fetch/XHR bridge below localizes observed runtime URLs
+                // without changing application bundles.
+                const capturedPathMap = Object.fromEntries([...rewritePaths.entries()].map(([remote, local]) => [remote, local]));
+                const runtimeBridge = `<script id="html-editor-runtime-asset-bridge">(()=>{const paths=${JSON.stringify(capturedPathMap)};const root=new URL('./',location.href);const localize=value=>{try{const url=new URL(value instanceof Request?value.url:value,location.href);const target=paths[url.pathname+url.search]||paths[url.pathname];if(!target)return value;const local=new URL(target.replace(/^\\/projects\\/[^/]+\\/website-package\\//,''),root);local.search=url.search;return value instanceof Request?new Request(local,value):local.href}catch{return value}};const fetchNative=window.fetch.bind(window);window.fetch=(input,init)=>fetchNative(localize(input),init);const xhrOpen=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url,...rest){return xhrOpen.call(this,method,localize(url),...rest)};})();</script>`;
+                let packageHtml = await fs.readFile(path.join(packageDirectory, 'index.html'), 'utf8');
+                packageHtml = packageHtml.replace('</head>', `${runtimeBridge}</head>`);
+                await fs.writeFile(path.join(packageDirectory, 'index.html'), packageHtml);
+            } catch (error) {
+                warnings.push(`Could not localize browser-discovered assets: ${error.message}`);
+            }
             const sceneReportPath = path.join(directory, 'source', 'spline-scenes.json');
             try {
                 const sceneReport = JSON.parse(await fs.readFile(sceneReportPath, 'utf8'));
@@ -489,15 +664,17 @@ const runCloneJob = async (projectId, job) => {
                 await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler+playwright+motion', progress: 96, message: 'Capturing a local replay of the rendered hero animation' });
                 motionCapture = await runMotionCapture(job, directory);
                 if (motionCapture.ok) {
-                    const packageHtml = await fs.readFile(path.join(packageDirectory, 'index.html'), 'utf8');
-                    await fs.writeFile(path.join(packageDirectory, 'index.html'), injectMotionReplay(packageHtml));
-                    report.motionCapture = 'completed';
+                    // Keep the motion recording as a diagnostic artifact. Overlaying
+                    // it under the live DOM duplicates animated text and controls.
+                    report.motionCapture = 'captured-reference-only';
                 } else {
                     report.motionCapture = 'unavailable';
                     warnings.push(`Hero motion capture unavailable: ${motionCapture.error}`);
                 }
             }
         }
+        report.assetsDownloaded = downloadedLocals.length;
+        report.warnings = warnings;
         await fs.writeFile(path.join(directory, 'source', 'clone-report.json'), `${JSON.stringify(report, null, 2)}\n`);
         const project = await readProject(projectId);
         const nextProject = { ...project, sourceUrl: job.url, updatedAt: new Date().toISOString(), phase: 'browser-capture-ready', previewUrl: `/projects/${projectId}/website-package/index.html`, screenshotUrl: browserCapture.ok ? `/projects/${projectId}/previews/browser-capture.png` : null, motionUrl: motionCapture.ok ? motionCapture.url : null, splineRuntimeUrl: splineRuntime.ok ? splineRuntime.runtimeUrl : null, lastCloneJobId: job.id };
@@ -513,7 +690,7 @@ const runCloneJob = async (projectId, job) => {
             splineRuntime: splineRuntime.ok ? splineRuntime : null,
             splineScenes: report.splineScenes || null,
             reportUrl: `/projects/${projectId}/source/clone-report.json`,
-            assets: replacements.map(([, local]) => local)
+            assets: [...new Set(downloadedLocals)]
         };
         await fs.writeFile(path.join(packageDirectory, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
         await fs.writeFile(path.join(directory, 'project.json'), `${JSON.stringify(nextProject, null, 2)}\n`);
@@ -521,11 +698,11 @@ const runCloneJob = async (projectId, job) => {
         await refreshProjectGraph(projectId);
         const workerName = splineRuntime.ok ? 'local-static-crawler+playwright+spline-runtime' : (browserCapture.ok ? 'local-static-crawler+playwright+motion' : 'local-static-crawler');
         const message = splineRuntime.ok
-            ? `Static package ready with ${replacements.length} local assets and a native Spline WebGL scene`
+            ? `Static package ready with ${downloadedLocals.length} local assets and a native Spline WebGL scene`
             : (browserCapture.ok
-                ? `Static package ready with ${replacements.length} local assets; rendered capture${motionCapture.ok ? ' and hero motion replay' : ''} saved`
-                : `Static package ready with ${replacements.length} local assets; browser capture unavailable`);
-        await writeJobStatus(projectId, job.id, { status: 'completed', worker: workerName, progress: 100, message, warnings, previewUrl: nextProject.previewUrl, screenshotUrl: nextProject.screenshotUrl, motionUrl: nextProject.motionUrl, splineRuntime: splineRuntime.ok ? 'completed' : 'unavailable', browserCapture: browserCapture.ok ? 'completed' : 'unavailable', motionCapture: motionCapture.ok ? 'completed' : (motionCapture.skipped ? 'not-needed' : 'unavailable') });
+                ? `Static package ready with ${downloadedLocals.length} local assets; rendered capture saved${motionCapture.ok ? ' (motion recording retained separately)' : ''}`
+                : `Static package ready with ${downloadedLocals.length} local assets; browser capture unavailable`);
+        await writeJobStatus(projectId, job.id, { status: 'completed', worker: workerName, progress: 100, message, warnings, previewUrl: nextProject.previewUrl, screenshotUrl: nextProject.screenshotUrl, motionUrl: nextProject.motionUrl, splineRuntime: splineRuntime.ok ? 'completed' : 'unavailable', browserCapture: browserCapture.ok ? 'completed' : 'unavailable', motionCapture: motionCapture.ok ? 'reference-captured' : (motionCapture.skipped ? 'not-needed' : 'unavailable') });
     } catch (error) {
         await writeJobStatus(projectId, job.id, { status: 'failed', worker: 'local-static-crawler', progress: 100, message: error.message, error: error.message, warnings });
     }
@@ -747,6 +924,10 @@ const server = createServer(async (request, response) => {
                 const job = await createCloneJob(projectId, payload);
                 if (!job) {
                     sendJson(response, 404, { error: 'Project not found' });
+                    return;
+                }
+                if (job.conflict) {
+                    sendJson(response, 409, { error: job.conflict });
                     return;
                 }
                 sendJson(response, 202, { job });
