@@ -356,6 +356,14 @@ const pollCloneJob = async (projectId, jobId) => {
                 activeLoginJobId = null;
                 setStatus(status, `Clone failed: ${job.message}`, { error: true });
                 updateCloneProgress(job);
+                // 401/403 can indicate a private page. Never retry with login
+                // automatically: the user must opt in and sign in themselves.
+                if (!job.interactiveLogin && /\bHTTP\s+(?:401|403)\b/i.test(job.message || '')) {
+                    if (window.confirm('This page may require sign-in. Open a local Chromium window and try again after you log in?')) {
+                        byId('clone-interactive-login').checked = true;
+                        void handleCloneRequest();
+                    }
+                }
                 return;
             }
             setStatus(status, `${job.message || 'Clone worker running'} (${job.progress || 0}%)`, { loading: true });
