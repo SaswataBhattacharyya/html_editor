@@ -9,7 +9,7 @@ import tempfile
 import threading
 import unittest
 
-from tools.browser_clone import capture_model_download, wait_for_login_continue
+from tools.browser_clone import MODEL_EXTENSIONS, capture_model_download, wait_for_login_continue
 
 
 def make_minimal_glb():
@@ -30,6 +30,9 @@ class FakeDownload:
 
 
 class TestDownloadCapture(unittest.TestCase):
+    def test_meshy_payload_is_recognized_as_a_runtime_model_format(self):
+        self.assertIn(".meshy", MODEL_EXTENSIONS)
+
     def test_login_wait_reports_when_browser_is_closed(self):
         class ClosingPage:
             closed = False
@@ -86,10 +89,11 @@ class TestDownloadCapture(unittest.TestCase):
 class TestBrowserRuntimeCapture(unittest.TestCase):
     def test_extensionless_cross_origin_glb_is_captured_but_other_binary_is_not(self):
         glb = make_minimal_glb()
+        meshy = b"MESHY\x00encrypted-test-payload"
         other = b"not a model response"
         class CdnHandler(BaseHTTPRequestHandler):
             def do_GET(self):
-                body = glb if self.path == "/asset" else other
+                body = glb if self.path == "/asset" else meshy if self.path == "/model.meshy" else other
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -118,6 +122,7 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
                 page = f"""<!doctype html><title>3D fixture</title><script>
                   Promise.all([
                     fetch('http://localhost:{cdn_port}/asset').then(r => r.arrayBuffer()),
+                    fetch('http://localhost:{cdn_port}/model.meshy').then(r => r.arrayBuffer()),
                     fetch('http://localhost:{cdn_port}/not-a-model').then(r => r.arrayBuffer())
                   ]);
                 </script>""".encode()
@@ -152,12 +157,16 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
                 result = subprocess.run(command, timeout=90, env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
                 report = json.loads((source / "runtime-assets.json").read_text())
-                self.assertEqual(len(report["models"]), 1, json.dumps(report, indent=2))
+                self.assertEqual(len(report["models"]), 2, json.dumps(report, indent=2))
                 self.assertTrue(any(model.get("external") for model in report["models"]))
                 for model in report["models"]:
-                    self.assertTrue(model["path"].endswith(".glb"))
-                    self.assertEqual((package / model["path"]).read_bytes()[:4], b"glTF")
-                self.assertEqual(len(report["assets"]), 1)
+                    content = (package / model["path"]).read_bytes()
+                    if model["path"].endswith(".glb"):
+                        self.assertEqual(content[:4], b"glTF")
+                    else:
+                        self.assertTrue(model["path"].endswith(".meshy"))
+                        self.assertEqual(content, meshy)
+                self.assertEqual(len(report["assets"]), 2)
         finally:
             cdn.shutdown()
             cdn.server_close()

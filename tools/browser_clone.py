@@ -12,7 +12,9 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 
-MODEL_EXTENSIONS = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode"}
+# `.meshy` is Meshy's proprietary runtime model payload. It is useful to retain
+# for an authorized capture, but is not a standard Blender interchange format.
+MODEL_EXTENSIONS = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode", ".meshy"}
 
 
 def wait_for_login_continue(page, signal_path, timeout_seconds):
@@ -102,6 +104,15 @@ def main():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(**launch_options)
         page = browser.new_page(viewport={"width": 1440, "height": 1000}, device_scale_factor=1)
+        # Apps with many large JS chunks can evict a model response from
+        # Chromium's DevTools cache before Playwright's response.body() reads
+        # it. Raise the bounded CDP body buffers before navigating so large
+        # runtime models such as Meshy's `model.meshy` remain readable.
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("Network.enable", {
+            "maxTotalBufferSize": int(os.environ.get("BROWSER_CDP_TOTAL_BUFFER_BYTES", str(512 * 1024 * 1024))),
+            "maxResourceBufferSize": int(os.environ.get("BROWSER_CDP_RESOURCE_BUFFER_BYTES", str(200 * 1024 * 1024))),
+        })
         scene_dir = Path(args.scene_dir) if args.scene_dir else None
         scene_report_path = Path(args.scene_report) if args.scene_report else None
         scene_files = []
