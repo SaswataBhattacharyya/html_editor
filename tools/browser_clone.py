@@ -76,14 +76,16 @@ def main():
                 request = response.request
                 parsed = urlparse(response.url)
                 extension = Path(parsed.path).suffix.lower()
-                is_model = extension in model_extensions
+                content_type = response.headers.get("content-type", "").lower()
+                is_model = extension in model_extensions or "model/gltf" in content_type
                 same_origin = parsed.netloc == capture_origin or (args.interactive_login and parsed.netloc == urlparse(page.url).netloc)
                 if (response.status != 200 or not (same_origin or is_model) or
                         request.resource_type in {"document", "websocket", "eventsource"} or
                         capture_count >= max_capture_assets or capture_bytes >= max_capture_bytes):
                     return
                 # Capture cross-origin responses ONLY for recognized 3D file formats.
-                # Do not mirror cross-origin API responses or private user data.
+                # Do not mirror arbitrary cross-origin API responses. Same-origin
+                # authenticated responses may be private; keep the project local.
                 safe_url = parsed._replace(query="", fragment="").geturl()
                 identity = response.url
                 if identity in seen_assets and not (args.interactive_login and request.resource_type in {"fetch", "xhr"}):
@@ -92,6 +94,10 @@ def main():
                     body = response.body()
                     if len(body) > max_capture_bytes - capture_bytes:
                         return
+                    if body[:4] == b"glTF":
+                        is_model = True
+                        if not extension:
+                            extension = ".glb"
                     if extension == ".glb" and body[:4] != b"glTF":
                         return  # Reject mislabeled HTML/API responses.
                     if same_origin:
