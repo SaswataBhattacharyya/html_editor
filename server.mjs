@@ -411,7 +411,7 @@ const runCloneJob = async (projectId, job) => {
     const warnings = [];
     try {
         await writeJobStatus(projectId, job.id, { status: 'running', worker: 'local-static-crawler', progress: 5, message: 'Fetching the target HTML' });
-        const targetUrl = new URL(job.url);
+        let targetUrl = new URL(job.url);
         // Capture the user's own authenticated browser BEFORE fetching protected HTML.
         // Never save Playwright storage_state, cookies or credentials.
         let browserCapture = null;
@@ -425,6 +425,10 @@ const runCloneJob = async (projectId, job) => {
             });
             browserCapture = await runBrowserCapture(projectId, job, directory);
             if (!browserCapture.ok) throw new Error(`Interactive browser capture failed: ${browserCapture.error}`);
+            try {
+                const browserReport = JSON.parse(await fs.readFile(path.join(directory, 'source', 'browser-report.json'), 'utf8'));
+                if (/^https?:\/\//.test(browserReport.finalUrl || '')) targetUrl = new URL(browserReport.finalUrl);
+            } catch { /* Continue with the originally requested URL for asset resolution. */ }
             await writeJobStatus(projectId, job.id, {
                 status: 'running', progress: 10, message: 'Capturing the signed-in page and 3D assets'
             });
