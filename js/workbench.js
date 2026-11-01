@@ -206,6 +206,7 @@ const handleCloneRequest = async () => {
     const status = byId('clone-status');
     const url = input?.value.trim() || '';
     byId('clone-login-continue').hidden = true;
+    byId('clone-model-assets').hidden = true;
     activeLoginJobId = null;
 
     if (!validateUrl(url)) {
@@ -270,6 +271,35 @@ const handleCloneRequest = async () => {
     }
 };
 
+const showCapturedModels = async (projectId) => {
+    const container = byId('clone-model-assets');
+    container.replaceChildren();
+    container.hidden = true;
+    try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/package`);
+        if (!response.ok) return;
+        const manifest = (await response.json()).package;
+        const models = Array.isArray(manifest.modelAssets) ? manifest.modelAssets : [];
+        if (!models.length) return;
+        const heading = document.createElement('strong');
+        heading.textContent = `Captured 3D files (${models.length}):`;
+        container.append(heading);
+        for (const asset of models) {
+            if (!/^[a-zA-Z0-9_.\/-]+$/.test(asset.path || '') || (asset.path || '').includes('..')) continue;
+            const row = document.createElement('div');
+            const link = document.createElement('a');
+            link.href = `/projects/${encodeURIComponent(projectId)}/website-package/${asset.path}`;
+            link.download = asset.path.split('/').at(-1);
+            link.textContent = asset.path.split('/').at(-1);
+            row.append(link);
+            container.append(row);
+        }
+        container.hidden = false;
+    } catch (error) {
+        console.warn('[workbench] Could not list model assets', error);
+    }
+};
+
 const handleLoginContinue = async () => {
     const id = window.workbenchProject?.id;
     const status = byId('clone-status');
@@ -318,6 +348,7 @@ const pollCloneJob = async (projectId, jobId) => {
                 writeProjects(projects);
                 activeLoginJobId = null;
                 setStatus(status, `Clone ready: ${job.message}. 3D files captured: ${job.modelAssetCount || 0}. Open the preview or rendered capture.`);
+                void showCapturedModels(project.id);
                 updateCloneProgress(job);
                 return;
             }
