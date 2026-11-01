@@ -3,6 +3,7 @@ const THEME_KEY = 'html-editor.theme';
 let backendProjects = [];
 let animationPlan = null;
 let clonePollToken = 0;
+let activeLoginJobId = null;
 
 const byId = (id) => document.getElementById(id);
 
@@ -204,6 +205,9 @@ const handleCloneRequest = async () => {
     const input = byId('clone-url');
     const status = byId('clone-status');
     const url = input?.value.trim() || '';
+    byId('clone-login-continue').hidden = true;
+    byId('clone-model-assets').hidden = true;
+    activeLoginJobId = null;
 
     if (!validateUrl(url)) {
         setStatus(status, 'Enter a complete http:// or https:// website URL.', { error: true });
@@ -252,17 +256,69 @@ const handleCloneRequest = async () => {
         const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}/clone`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ url })
+            body: JSON.stringify({ url, interactiveLogin: Boolean(byId('clone-interactive-login')?.checked) })
         });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || `Clone API returned ${response.status}`);
         const job = payload.job;
+        activeLoginJobId = job.interactiveLogin ? job.id : null;
         updateCloneProgress(job);
         setStatus(status, `${createdForUrl ? 'Created a separate project to preserve the previous clone. ' : ''}Clone job ${job.id} queued. Local worker started.`, { loading: true });
         pollCloneJob(project.id, job.id);
         return;
     } catch (error) {
         setStatus(status, `Could not start clone: ${error.message}`, { error: true });
+    }
+};
+
+const showCapturedModels = async (projectId) => {
+    const container = byId('clone-model-assets');
+    container.replaceChildren();
+    container.hidden = true;
+    try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/package`);
+        if (!response.ok) return;
+        const manifest = (await response.json()).package;
+        const models = Array.isArray(manifest.modelAssets) ? manifest.modelAssets : [];
+        if (!models.length) return;
+        const heading = document.createElement('strong');
+        heading.textContent = `Captured 3D files (${models.length}):`;
+        container.append(heading);
+        for (const asset of models) {
+            if (!/^[a-zA-Z0-9_.\/-]+$/.test(asset.path || '') || (asset.path || '').includes('..')) continue;
+            const row = document.createElement('div');
+            const link = document.createElement('a');
+            link.href = `/projects/${encodeURIComponent(projectId)}/website-package/${asset.path}`;
+            link.download = asset.path.split('/').at(-1);
+            link.textContent = asset.path.split('/').at(-1);
+            row.append(link);
+            container.append(row);
+        }
+        container.hidden = false;
+    } catch (error) {
+        console.warn('[workbench] Could not list model assets', error);
+    }
+};
+
+const handleLoginContinue = async () => {
+    const id = window.workbenchProject?.id;
+    const status = byId('clone-status');
+    if (!id || !activeLoginJobId) {
+        setStatus(status, 'No clone job is awaiting a login.', { error: true });
+        return;
+    }
+    const button = byId('clone-login-continue');
+    button.disabled = true;
+    try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(id)}/jobs/${encodeURIComponent(activeLoginJobId)}/continue-login`, { method: 'POST' });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        button.hidden = true;
+        setStatus(status, 'Capturing the page using the session in your Chromium window…', { loading: true });
+    } catch (error) {
+        setStatus(status, `Could not continue login capture: ${error.message}`, { error: true });
+    } finally {
+        button.disabled = false;
     }
 };
 
@@ -278,18 +334,36 @@ const pollCloneJob = async (projectId, jobId) => {
             const payload = await response.json();
             const job = payload.job;
             updateCloneProgress(job);
+            if (job.status === 'awaiting-login') {
+                activeLoginJobId = job.id;
+                byId('clone-login-continue').hidden = false;
+                setStatus(status, 'A Chromium window should now be open on this computer. Sign in, navigate to the page you want, then click Continue after login.', { loading: true });
+                continue;
+            }
+            byId('clone-login-continue').hidden = true;
             if (job.status === 'completed') {
                 const project = { ...window.workbenchProject, previewUrl: job.previewUrl, screenshotUrl: job.screenshotUrl, phase: 'browser-capture-ready', lastCloneJobId: job.id };
                 window.workbenchProject = project;
                 const projects = readProjects().map((item) => item.id === project.id ? project : item);
                 writeProjects(projects);
-                setStatus(status, `Clone ready: ${job.message}. Open the preview or rendered capture.`);
+                activeLoginJobId = null;
+                setStatus(status, `Clone ready: ${job.message}. 3D files captured: ${job.modelAssetCount || 0}. Open the preview or rendered capture.`);
+                void showCapturedModels(project.id);
                 updateCloneProgress(job);
                 return;
             }
             if (job.status === 'failed') {
+                activeLoginJobId = null;
                 setStatus(status, `Clone failed: ${job.message}`, { error: true });
                 updateCloneProgress(job);
+                // 401/403 can indicate a private page. Never retry with login
+                // automatically: the user must opt in and sign in themselves.
+                if (!job.interactiveLogin && /\bHTTP\s+(?:401|403)\b/i.test(job.message || '')) {
+                    if (window.confirm('This page may require sign-in. Open a local Chromium window and try again after you log in?')) {
+                        byId('clone-interactive-login').checked = true;
+                        void handleCloneRequest();
+                    }
+                }
                 return;
             }
             setStatus(status, `${job.message || 'Clone worker running'} (${job.progress || 0}%)`, { loading: true });
@@ -448,6 +522,7 @@ const initWorkbench = () => {
     });
 
     byId('clone-button')?.addEventListener('click', handleCloneRequest);
+    byId('clone-login-continue')?.addEventListener('click', handleLoginContinue);
     byId('load-project-button')?.addEventListener('click', openProjectDialog);
     byId('preview-button')?.addEventListener('click', handlePreviewRequest);
     byId('capture-button')?.addEventListener('click', handleCaptureRequest);

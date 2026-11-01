@@ -1,0 +1,54 @@
+# Codex handoff: authenticated 3D website-clone capture
+
+## Scope already implemented in this branch
+
+- Opt-in "Use interactive login" in `index.html`, clone orchestration in `js/workbench.js`.
+- `server.mjs`: interactive capture before anonymous static crawling; localhost-only sign-in continuation endpoint; model entries in manifest; default localhost binding and Docker override.
+- `tools/browser_clone.py`: visible Chromium with one-time continue signal (no Playwright storage-state file), same-origin network capture, recognized cross-origin 3D responses, GLB magic validation, best-effort canvas detection and query redaction.
+- UI lists captured 3D files for local download.
+- Captured **network model files only**; no generic Three.js scene graph export / WebGL buffer reconstruction.
+
+Do not delete existing cloner behavior or silently switch existing public clone behavior.
+
+## Do this first
+
+1. `git fetch origin feature/authenticated-3d-clone && git checkout feature/authenticated-3d-clone`.
+2. Read `skills/runtime-site-cloning/SKILL.md`, `plan/cloner_failure_analysis.md`, `README.md`.
+3. Run `node --check server.mjs`, `node --check js/workbench.js`, `python3 -m py_compile tools/browser_clone.py`.
+4. Install local dependencies: `npm install`; `python3 -m pip install playwright`; `python3 -m playwright install chromium`; start with `npm start`. Ensure `HTML_EDITOR_HOST` is unset or set to `127.0.0.1`.
+5. Fix any syntax, import, runtime or local-display problems. **Avoid writing actual passwords, cookies, storage_state or auth headers to project manifests, reports, logs or Git.**
+
+## Local acceptance fixtures and integration tests
+
+Create controlled local test websites (NOT live third-party accounts) for:
+
+A. Public page loading a valid `.glb` via fetch/XHR after page load; ensure existing public clone still runs, captures 3D, and lists a downloadable file with `glTF` magic.
+B. Login-protected page with simple cookie-based login and a GLB request only after authentication. Start interactive clone, let user log in in the visible browser, then click **Continue after login**. Check HTML, screenshot, asset, manifest, model count and local preview. Verify no cookies or tokens are exported. Test rejecting continuation before/after the correct job state.
+C. Login redirects (`/login` to `/dashboard`, plus optional subdomain redirect); ensure asset resolution and final source URL work.
+D. Model loaded only after clicking a nondestructive UI control; user can click it in the browser before pressing Continue.
+E. Cross-origin model served by a local test CDN. Confirm it is downloaded under `assets/external-models/`, listed in manifest and that preview can resolve it through fetch/XHR mapping. Test a model URL with a signed query string (redacted from reports), different 3D URLs with the same basename, invalid GLB magic and oversized files.
+F. `.gltf` referencing external `.bin` and textures; evaluate what is missing. Add a narrow dependency-aware downloader if it is needed, with explicit permission and resource limits.
+G. Canvas-only Three.js scene with no GLB network request: report 'canvas detected, no exportable model captured' instead of falsely claiming it exported GLB.
+H. Regression clones of GSAP homepage, ActionForge animation viewer and Spline scene if accessible and authorized; compare rendered DOM, GLB selection/export, CSS/JS loading, console errors, screenshot fidelity, and original clone-to-editor import.
+
+## Review and fix these known high-risk issues
+
+- **Interactive browser spawn:** Playwright `headless=False` needs a display; handle absent DISPLAY/X11, Windows, macOS and no-GUI Docker. Show actionable errors, never hang.
+- **Authentication lifecycle:** timeout, user closing browser, user pressing Continue early, stale signal, multiple jobs, OAuth popup/redirect, browser crash; ensure jobs correctly transition `queued -> awaiting-login -> running -> completed/failed`.
+- **Captured asset integrity:** verify that authenticated files are not overwritten by anonymous requests. Missing private assets must become warnings rather than silent broken links. Handle redirects, relative URL resolution, CSS, XHR/fetch, signed URLs and CDN models.
+- **Security:** local-only mode, no credential/token leakage in reports, browser state, URLs, errors or downloaded ZIPs. **Captured HTML, screenshots and authenticated API responses can contain sensitive data**; warn users and isolate previews. Consider disabling unsafe outgoing requests/scripts in imported HTML.
+- **Snapshot and package:** ensure `rendered.html`, `index.html`, `runtime-assets.json` and `manifest.json` agree. Check filename collisions, duplicate response paths, nested assets, manifest asset counts and MIME types. Handle failed-clone transactional staging to protect the last good package.
+- **3D quality:** inspect a GLB in Blender; check mesh, UVs, textures, skeleton and animations. If they were not present in the source bytes, don't claim to have recovered them.
+- **No generic live scene extraction yet:** optional next step only for accessible, authorized Three.js scenes, via version-compatible `GLTFExporter` with limitations. Do not bypass paywalls, authentication or DRM.
+
+## Optional second phase: multiple authenticated pages
+
+Current flow captures the **one current page** in the interactive browser. For user-selected additional pages, add an explicit URL/path list scoped to the signed-in origin and navigate with the same ephemeral browser context. Do not indiscriminately crawl authenticated links or trigger destructive actions. Store pages separately and preserve routes in the package manifest.
+
+## Definition of done
+
+- All integration tests pass locally with evidence; main clone workflow remains intact.
+- User can open a visible browser, sign in by themselves, navigate to an authorized page, click Continue and get its network-loaded 3D files listed with working downloads.
+- A local clone displays the expected web content and compatible GLB-loaded 3D scene. Clearly report when full WebGL extraction is unsupported.
+- Screenshots/console/network traces compared for source vs clone, with no unapproved external network side effects.
+- Apply and commit fixes to this feature branch; send a detailed summary of tested platforms, passing/failing cases, edited files and any remaining restrictions. Open or update PR for review; **do not merge directly into main**.

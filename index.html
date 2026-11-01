@@ -919,8 +919,16 @@
                     <label for="clone-url">Website URL</label>
                     <input id="clone-url" type="url" placeholder="https://example.com" autocomplete="url">
                 </div>
+                <div class="workbench-field">
+                    <label style="display:flex;align-items:center;gap:8px">
+                        <input id="clone-interactive-login" type="checkbox">
+                        Use interactive login (local desktop Chromium)
+                    </label>
+                    <small>For sites you own or have permission to copy. Signed-in content may be sensitive; the editor stores a local page snapshot, not credentials. Model files are extracted when observed in network requests.</small>
+                </div>
                 <div class="workbench-row">
                     <button class="workbench-button primary" id="clone-button" type="button">Prepare clone</button>
+                    <button class="workbench-button" id="clone-login-continue" type="button" hidden>Continue after login</button>
                     <button class="workbench-button" id="load-project-button" type="button">Load project</button>
                     <button class="workbench-button" id="preview-button" type="button">Open local preview</button>
                     <button class="workbench-button" id="capture-button" type="button">Open capture</button>
@@ -929,6 +937,7 @@
                 <div class="workbench-status" id="clone-status" role="status">
                     <span>Ready.</span>
                 </div>
+                <div id="clone-model-assets" class="workbench-status" hidden aria-live="polite"></div>
                 <div class="workbench-progress" id="clone-progress" hidden aria-live="polite">
                     <div class="workbench-progress-track"><div class="workbench-progress-fill" id="clone-progress-fill"></div></div>
                     <span id="clone-progress-label">Waiting for the clone worker…</span>
