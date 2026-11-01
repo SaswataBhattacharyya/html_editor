@@ -55,6 +55,10 @@ def main():
         capture_dir = Path(args.capture_assets_dir) if args.capture_assets_dir else None
         runtime_report_path = Path(args.runtime_assets_report) if args.runtime_assets_report else None
         capture_origin = urlparse(args.url).netloc
+
+        def report_url(value):
+            parsed = urlparse(value)
+            return parsed._replace(query="", fragment="").geturl() if args.interactive_login else value
         capture_bytes = 0
         capture_count = 0
         model_extensions = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode"}
@@ -73,7 +77,7 @@ def main():
                 parsed = urlparse(response.url)
                 extension = Path(parsed.path).suffix.lower()
                 is_model = extension in model_extensions
-                same_origin = parsed.netloc == capture_origin
+                same_origin = parsed.netloc == capture_origin or (args.interactive_login and parsed.netloc == urlparse(page.url).netloc)
                 if (response.status != 200 or not (same_origin or is_model) or
                         request.resource_type in {"document", "websocket", "eventsource"} or
                         capture_count >= max_capture_assets or capture_bytes >= max_capture_bytes):
@@ -82,12 +86,14 @@ def main():
                 # Do not mirror cross-origin API responses or private user data.
                 safe_url = parsed._replace(query="", fragment="").geturl()
                 identity = response.url
-                if identity in seen_assets:
+                if identity in seen_assets and not (args.interactive_login and request.resource_type in {"fetch", "xhr"}):
                     return
                 try:
                     body = response.body()
                     if len(body) > max_capture_bytes - capture_bytes:
                         return
+                    if extension == ".glb" and body[:4] != b"glTF":
+                        return  # Reject mislabeled HTML/API responses.
                     if same_origin:
                         relative = Path(unquote(parsed.path).lstrip("/"))
                     else:
@@ -123,11 +129,11 @@ def main():
             page.on("response", capture_runtime_asset)
 
         page.on("requestfailed", lambda request: failed_requests.append({
-            "url": request.url,
+            "url": report_url(request.url),
             "failure": request.failure,
         }))
         page.on("response", lambda response: http_errors.append({
-            "url": response.url,
+            "url": report_url(response.url),
             "status": response.status,
         }) if response.status >= 400 else None)
 
@@ -144,10 +150,10 @@ def main():
                             else f"modelling-{len(wasm_files):02d}.wasm")
                     target = scene_dir / name
                     target.write_bytes(body)
-                    item = {"url": url, "path": str(target), "bytes": len(body), "status": response.status}
+                    item = {"url": report_url(url), "path": str(target), "bytes": len(body), "status": response.status}
                     (scene_files if is_scene else wasm_files).append(item)
                 except Exception as error:
-                    (scene_files if is_scene else wasm_files).append({"url": url, "error": str(error)})
+                    (scene_files if is_scene else wasm_files).append({"url": report_url(url), "error": str(error)})
 
             page.on("response", capture_spline_response)
         response = page.goto(
@@ -205,16 +211,17 @@ def main():
         page.wait_for_timeout(300)
         page.screenshot(path=str(screenshot_path), full_page=True)
         html_path.write_text(page.content(), encoding="utf-8")
-        scene_hints = page.evaluate("""() => Array.from(document.querySelectorAll('canvas')).map(c => ({
-          engine: c.dataset.engine || null, width: c.width, height: c.height,
-          webgl: !!(c.getContext && (c.getContext('webgl2') || c.getContext('webgl')))
-        }))""")
+        scene_hints = page.evaluate("""() => Array.from(document.querySelectorAll('canvas')).map(c => {
+          let webgl = false;
+          try { webgl = !!(c.getContext && (c.getContext('webgl2') || c.getContext('webgl'))); } catch (_) {}
+          return {engine: c.dataset.engine || null, width: c.width, height: c.height, webgl};
+        })""")
         # A canvas is evidence of rendering, NOT proof that mesh export is possible.
         report = {
             "url": args.url,
             "title": page.title(),
             "status": response.status if response else None,
-            "finalUrl": page.url,
+            "finalUrl": report_url(page.url),
             "viewport": {"width": 1440, "height": 1000},
             "links": page.locator("a").count(),
             "images": page.locator("img").count(),
