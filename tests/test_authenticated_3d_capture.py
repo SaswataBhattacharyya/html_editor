@@ -9,7 +9,15 @@ import tempfile
 import threading
 import unittest
 
-from tools.browser_clone import MODEL_EXTENSIONS, capture_model_download, wait_for_login_continue
+from tools.browser_clone import (
+    MODEL_EXTENSIONS,
+    capture_model_download,
+    is_wasm_resource,
+    should_capture_cross_origin_asset,
+    should_capture_authenticated_fetch,
+    should_retain_authenticated_response,
+    wait_for_login_continue,
+)
 
 
 def make_minimal_glb():
@@ -32,6 +40,17 @@ class FakeDownload:
 class TestDownloadCapture(unittest.TestCase):
     def test_meshy_payload_is_recognized_as_a_runtime_model_format(self):
         self.assertIn(".meshy", MODEL_EXTENSIONS)
+
+    def test_authenticated_capture_keeps_wasm_decoder_but_discards_other_fetch_data(self):
+        self.assertTrue(is_wasm_resource("https://meshy.invalid/resource/mesh_loader.wasm", "application/wasm"))
+        self.assertTrue(is_wasm_resource("https://meshy.invalid/loader", "application/wasm; charset=binary"))
+        self.assertTrue(should_capture_authenticated_fetch("fetch", False, False, True))
+        self.assertFalse(should_capture_authenticated_fetch("fetch", False, False, False))
+        self.assertTrue(should_capture_authenticated_fetch("script", False, False, False))
+        self.assertTrue(should_retain_authenticated_response("fetch", False, True))
+        self.assertFalse(should_retain_authenticated_response("fetch", False, False))
+        self.assertTrue(should_capture_cross_origin_asset(False, False, False, True))
+        self.assertFalse(should_capture_cross_origin_asset(False, False, False, False))
 
     def test_login_wait_reports_when_browser_is_closed(self):
         class ClosingPage:
@@ -90,12 +109,14 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
     def test_extensionless_cross_origin_glb_is_captured_but_other_binary_is_not(self):
         glb = make_minimal_glb()
         meshy = b"MESHY\x00encrypted-test-payload"
+        wasm = b"\x00asm\x01\x00\x00\x00test-decoder"
         other = b"not a model response"
         class CdnHandler(BaseHTTPRequestHandler):
             def do_GET(self):
-                body = glb if self.path == "/asset" else meshy if self.path == "/model.meshy" else other
+                body = (glb if self.path == "/asset" else meshy if self.path == "/model.meshy"
+                        else wasm if self.path == "/decoder.wasm" else other)
                 self.send_response(200)
-                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Type", "application/wasm" if self.path == "/decoder.wasm" else "application/octet-stream")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -111,6 +132,13 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
 
         class SiteHandler(BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.path == "/local-decoder.wasm":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/wasm")
+                    self.send_header("Content-Length", str(len(wasm)))
+                    self.end_headers()
+                    self.wfile.write(wasm)
+                    return
                 if self.path == "/meshy-export.glb":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/octet-stream")
@@ -123,7 +151,9 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
                   Promise.all([
                     fetch('http://localhost:{cdn_port}/asset').then(r => r.arrayBuffer()),
                     fetch('http://localhost:{cdn_port}/model.meshy').then(r => r.arrayBuffer()),
-                    fetch('http://localhost:{cdn_port}/not-a-model').then(r => r.arrayBuffer())
+                    fetch('http://localhost:{cdn_port}/not-a-model').then(r => r.arrayBuffer()),
+                    fetch('http://localhost:{cdn_port}/decoder.wasm').then(r => r.arrayBuffer()),
+                    fetch('/local-decoder.wasm').then(r => r.arrayBuffer())
                   ]);
                 </script>""".encode()
                 self.send_response(200)
@@ -158,6 +188,7 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
                 report = json.loads((source / "runtime-assets.json").read_text())
                 self.assertEqual(len(report["models"]), 2, json.dumps(report, indent=2))
+                self.assertEqual(len(report["decoderFiles"]), 2, json.dumps(report, indent=2))
                 self.assertTrue(any(model.get("external") for model in report["models"]))
                 for model in report["models"]:
                     content = (package / model["path"]).read_bytes()
@@ -166,7 +197,9 @@ class TestBrowserRuntimeCapture(unittest.TestCase):
                     else:
                         self.assertTrue(model["path"].endswith(".meshy"))
                         self.assertEqual(content, meshy)
-                self.assertEqual(len(report["assets"]), 2)
+                for decoder in report["decoderFiles"]:
+                    self.assertEqual((package / decoder["path"]).read_bytes(), wasm)
+                self.assertEqual(len(report["assets"]), 4)
         finally:
             cdn.shutdown()
             cdn.server_close()

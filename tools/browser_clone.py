@@ -17,6 +17,22 @@ from playwright.sync_api import sync_playwright
 MODEL_EXTENSIONS = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode", ".meshy"}
 
 
+def is_wasm_resource(url, content_type):
+    return Path(urlparse(url).path).suffix.lower() == ".wasm" or content_type.split(";", 1)[0].strip().lower() == "application/wasm"
+
+
+def should_capture_authenticated_fetch(resource_type, is_model, generic_binary, is_wasm):
+    return resource_type not in {"fetch", "xhr"} or is_model or generic_binary or is_wasm
+
+
+def should_retain_authenticated_response(resource_type, is_model, is_wasm):
+    return resource_type not in {"fetch", "xhr"} or is_model or is_wasm
+
+
+def should_capture_cross_origin_asset(same_origin, is_model, generic_binary, is_wasm):
+    return same_origin or is_model or generic_binary or is_wasm
+
+
 def wait_for_login_continue(page, signal_path, timeout_seconds):
     signal = Path(signal_path)
     deadline = time.monotonic() + timeout_seconds
@@ -117,6 +133,7 @@ def main():
         scene_report_path = Path(args.scene_report) if args.scene_report else None
         scene_files = []
         wasm_files = []
+        decoder_files = []
         runtime_assets = []
         model_assets = []
         failed_requests = []
@@ -149,19 +166,22 @@ def main():
                 content_type = response.headers.get("content-type", "").lower()
                 content_disposition = response.headers.get("content-disposition", "").lower()
                 is_model = extension in model_extensions or "model/gltf" in content_type
+                is_wasm = is_wasm_resource(response.url, content_type)
+                if is_wasm and extension != ".wasm":
+                    extension = ".wasm"
                 generic_binary = content_type.split(";", 1)[0].strip() in {
                     "application/octet-stream", "binary/octet-stream"
                 }
                 same_origin = parsed.netloc == capture_origin or (args.interactive_login and parsed.netloc == urlparse(page.url).netloc)
-                if (response.status != 200 or not (same_origin or is_model or generic_binary) or
+                if (response.status != 200 or not should_capture_cross_origin_asset(same_origin, is_model, generic_binary, is_wasm) or
                         request.resource_type in {"document", "websocket", "eventsource"} or
-                        (args.interactive_login and request.resource_type in {"fetch", "xhr"} and not (is_model or generic_binary)) or
+                        (args.interactive_login and not should_capture_authenticated_fetch(request.resource_type, is_model, generic_binary, is_wasm)) or
                         "attachment" in content_disposition or
                         capture_count >= max_capture_assets or capture_bytes >= max_capture_bytes):
                     return
-                # Capture cross-origin responses ONLY for recognized 3D file formats.
-                # Do not mirror arbitrary cross-origin API responses. Same-origin
-                # authenticated responses may be private; keep the project local.
+                    # Cross-origin capture is limited to recognized model or WASM
+                    # decoder resources; do not mirror arbitrary CDN/API responses.
+                    # Same-origin authenticated responses may be private; keep local.
                 safe_url = parsed._replace(query="", fragment="").geturl()
                 identity = response.url
                 if identity in seen_assets and not (args.interactive_login and request.resource_type in {"fetch", "xhr"}):
@@ -172,7 +192,7 @@ def main():
                     # responses from cross-origin hosts; persist them only when
                     # the GLB magic bytes prove that they are model files.
                     content_length = int(response.headers.get("content-length", "0") or 0)
-                    if not same_origin and not is_model and generic_binary and content_length > max_capture_bytes - capture_bytes:
+                    if not same_origin and (generic_binary or is_wasm) and content_length > max_capture_bytes - capture_bytes:
                         return
                     body = response.body()
                     if len(body) > max_capture_bytes - capture_bytes:
@@ -183,9 +203,9 @@ def main():
                             extension = ".glb"
                     # Authenticated fetch/XHR bodies can contain private profile,
                     # project, or API data. Persist only validated 3D payloads.
-                    if args.interactive_login and request.resource_type in {"fetch", "xhr"} and not is_model:
+                    if args.interactive_login and not should_retain_authenticated_response(request.resource_type, is_model, is_wasm):
                         return
-                    if not same_origin and not is_model:
+                    if not same_origin and not (is_model or is_wasm):
                         return
                     if extension == ".glb" and body[:4] != b"glTF":
                         return  # Reject mislabeled HTML/API responses.
@@ -218,6 +238,8 @@ def main():
                     runtime_assets.append(record)
                     if is_model:
                         model_assets.append(record)
+                    if is_wasm:
+                        decoder_files.append({**record, "decoder": True})
                 except Exception as error:
                     runtime_assets.append({"url": safe_url, "error": str(error)})
 
@@ -225,7 +247,7 @@ def main():
             # handle. Persist it after the event loop returns; calling
             # download.save_as() inside a sync callback can deadlock.
             page.on("download", lambda download: pending_downloads.append(download))
-            page.on("response", capture_runtime_asset)
+            page.context.on("response", capture_runtime_asset)
 
         page.on("requestfailed", lambda request: failed_requests.append({
             "url": report_url(request.url),
@@ -335,6 +357,7 @@ def main():
             "screenshot": str(screenshot_path),
             "sceneFiles": scene_files,
             "wasmFiles": wasm_files,
+            "decoderFiles": decoder_files,
             "runtimeAssets": runtime_assets,
             "modelAssets": model_assets,
             "canvasHints": scene_hints,
@@ -348,7 +371,7 @@ def main():
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         if runtime_report_path:
             runtime_report_path.parent.mkdir(parents=True, exist_ok=True)
-            runtime_report_path.write_text(json.dumps({"assets": runtime_assets, "models": model_assets, "canvasHints": scene_hints, "count": capture_count, "bytes": capture_bytes, "failedRequests": failed_requests, "httpErrors": http_errors, "interactionTrace": interaction_trace}, indent=2) + "\n", encoding="utf-8")
+            runtime_report_path.write_text(json.dumps({"assets": runtime_assets, "models": model_assets, "decoderFiles": decoder_files, "canvasHints": scene_hints, "count": capture_count, "bytes": capture_bytes, "failedRequests": failed_requests, "httpErrors": http_errors, "interactionTrace": interaction_trace}, indent=2) + "\n", encoding="utf-8")
         if scene_report_path:
             scene_report_path.parent.mkdir(parents=True, exist_ok=True)
             scene_report_path.write_text(json.dumps({"sceneFiles": scene_files, "wasmFiles": wasm_files}, indent=2) + "\n", encoding="utf-8")
