@@ -760,7 +760,7 @@ const runCloneJob = async (projectId, job) => {
             : (browserCapture.ok
                 ? `Static package ready with ${downloadedLocals.length} local assets; rendered capture saved${motionCapture.ok ? ' (motion recording retained separately)' : ''}`
                 : `Static package ready with ${downloadedLocals.length} local assets; browser capture unavailable`);
-        await writeJobStatus(projectId, job.id, { status: 'completed', worker: workerName, progress: 100, message, warnings, previewUrl: nextProject.previewUrl, screenshotUrl: nextProject.screenshotUrl, motionUrl: nextProject.motionUrl, splineRuntime: splineRuntime.ok ? 'completed' : 'unavailable', browserCapture: browserCapture.ok ? 'completed' : 'unavailable', motionCapture: motionCapture.ok ? 'reference-captured' : (motionCapture.skipped ? 'not-needed' : 'unavailable') });
+        await writeJobStatus(projectId, job.id, { status: 'completed', worker: workerName, progress: 100, message, warnings, modelAssetCount: capturedModels.length, previewUrl: nextProject.previewUrl, screenshotUrl: nextProject.screenshotUrl, motionUrl: nextProject.motionUrl, splineRuntime: splineRuntime.ok ? 'completed' : 'unavailable', browserCapture: browserCapture.ok ? 'completed' : 'unavailable', motionCapture: motionCapture.ok ? 'reference-captured' : (motionCapture.skipped ? 'not-needed' : 'unavailable') });
     } catch (error) {
         await writeJobStatus(projectId, job.id, { status: 'failed', worker: 'local-static-crawler', progress: 100, message: error.message, error: error.message, warnings });
     }
@@ -938,6 +938,11 @@ const server = createServer(async (request, response) => {
                 const jobId = segments[4];
                 if (!/^[0-9]+-[a-f0-9]{8}$/.test(jobId)) {
                     sendJson(response, 400, { error: 'Invalid job id' });
+                    return;
+                }
+                const origin = request.headers.origin;
+                if (origin && ![`http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(origin)) {
+                    sendJson(response, 403, { error: 'Cross-origin login continuation is not allowed.' });
                     return;
                 }
                 const folder = path.join(projectPath(projectId), 'jobs', jobId);
