@@ -9,7 +9,7 @@ import tempfile
 import threading
 import unittest
 
-from tools.browser_clone import capture_model_download
+from tools.browser_clone import capture_model_download, wait_for_login_continue
 
 
 def make_minimal_glb():
@@ -30,6 +30,21 @@ class FakeDownload:
 
 
 class TestDownloadCapture(unittest.TestCase):
+    def test_login_wait_reports_when_browser_is_closed(self):
+        class ClosingPage:
+            closed = False
+
+            def is_closed(self):
+                return self.closed
+
+            def wait_for_timeout(self, _milliseconds):
+                self.closed = True
+                raise RuntimeError("Target page has been closed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "Login browser was closed before capture"):
+                wait_for_login_continue(ClosingPage(), Path(directory) / "continue", 1)
+
     def test_downloaded_glb_is_safely_saved_and_query_redacted(self):
         with tempfile.TemporaryDirectory() as directory:
             content = make_minimal_glb()

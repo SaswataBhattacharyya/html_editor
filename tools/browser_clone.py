@@ -15,6 +15,23 @@ from playwright.sync_api import sync_playwright
 MODEL_EXTENSIONS = {".glb", ".gltf", ".fbx", ".obj", ".usdz", ".ktx2", ".basis", ".splinecode"}
 
 
+def wait_for_login_continue(page, signal_path, timeout_seconds):
+    signal = Path(signal_path)
+    deadline = time.monotonic() + timeout_seconds
+    while not signal.exists() and time.monotonic() < deadline:
+        if page.is_closed():
+            raise RuntimeError("Login browser was closed before capture")
+        try:
+            page.wait_for_timeout(300)
+        except Exception as error:
+            if page.is_closed():
+                raise RuntimeError("Login browser was closed before capture") from error
+            raise
+    if not signal.exists():
+        raise TimeoutError("Timed out waiting for the user to continue after login")
+    signal.unlink(missing_ok=True)
+
+
 def capture_model_download(download, capture_dir, safe_url, remaining_bytes, asset_limit_reached=False):
     """Persist a user-triggered 3D download within the clone package."""
     if asset_limit_reached:
@@ -235,15 +252,7 @@ def main():
         if args.interactive_login:
             # The user's own visible Chromium window handles credentials, 2FA and
             # protected navigation. No storage_state, cookies or passwords are saved.
-            signal = Path(args.auth_continue_file)
-            deadline = time.monotonic() + max(30, min(args.login_timeout, 1800))
-            while not signal.exists() and time.monotonic() < deadline:
-                if page.is_closed():
-                    raise RuntimeError("Login browser was closed before capture")
-                page.wait_for_timeout(300)
-            if not signal.exists():
-                raise TimeoutError("Timed out waiting for the user to continue after login")
-            signal.unlink(missing_ok=True)
+            wait_for_login_continue(page, args.auth_continue_file, max(30, min(args.login_timeout, 1800)))
             try:
                 page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
