@@ -12,6 +12,8 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3000
+      # Docker requires a network listener; interactive login is intentionally disabled in this mode.
+      HTML_EDITOR_HOST: 0.0.0.0
       HTML_EDITOR_CHROMIUM_PATH: /usr/bin/chromium
       PINEPAPER_ROOT: /opt/pinepaper
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
