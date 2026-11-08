@@ -107,7 +107,8 @@ function downloadApk(urlString, dest) {
                     if (error) return callback(error);
                     if (!results.length || results.some(item => !isPublicIp(item.address)))
                         return callback(new Error('Private or reserved APK host is blocked'));
-                    callback(null, results[0].address, results[0].family);
+                    if (options?.all) callback(null, results);
+                    else callback(null, results[0].address, results[0].family);
                 });
             }
         }, async response => {
