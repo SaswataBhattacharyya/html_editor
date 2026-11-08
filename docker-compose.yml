@@ -5,8 +5,9 @@ services:
       dockerfile: Dockerfile
     image: html_editor:latest
     container_name: html_editor
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    # Match the host account so projects created in Docker remain writable in
+    # host desktop mode and do not become owned by nobody/root.
+    user: "${HTML_EDITOR_UID:-1000}:${HTML_EDITOR_GID:-1000}"
     ports:
       - "${HTML_EDITOR_PORT:-3000}:3000"
     environment:

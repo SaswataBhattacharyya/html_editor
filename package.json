@@ -5,6 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "test:clone-assets": "node --test tests/clone-assets.test.mjs tests/package-path.test.mjs",
     "build:css": "tailwindcss -i ./src/input.css -o ./dist/output.css --watch",
     "start": "node server.mjs",
     "dev": "npm run build:css & node server.mjs",

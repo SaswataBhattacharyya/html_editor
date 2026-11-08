@@ -6,11 +6,14 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { convertBuffer } from '@visioncortex/vtracer';
 import { runPinePaper } from './tools/pinepaper-client.mjs';
+import { extractAssetReferences } from './tools/clone-assets.mjs';
+import { safePackageRelativePath, safePackageUrlPath } from './tools/package-path.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const projectsDir = path.join(rootDir, 'projects');
 const port = Number(process.env.PORT || 3000);
 const bindHost = process.env.HTML_EDITOR_HOST || '127.0.0.1'; // Private captures must never be served publicly by default.
+const interactiveLoginEnabled = ['127.0.0.1', 'localhost', '::1'].includes(bindHost);
 const cloneLimits = { assets: 300, assetBytes: 50 * 1024 * 1024, totalBytes: 200 * 1024 * 1024 };
 
 const mimeTypes = {
@@ -307,39 +310,7 @@ const downloadUrlForAsset = (url) => {
 const isPublicMediaAsset = (url) => /\.(?:avif|bmp|css|gif|ico|jpe?g|mjs|mp3|mp4|ogg|png|svg|webm|webp|woff2?|ttf|otf|glb|gltf|fbx|obj|ktx2|basis|usdz|splinecode)(?:$|[?#])/i.test(url.pathname);
 const splineRuntimeUrl = 'https://unpkg.com/@splinetool/runtime@1.10.89/build/runtime.js';
 
-const extractAssetReferences = (html, pageUrl) => {
-    const page = new URL(pageUrl);
-    const values = [];
-    const pattern = /(?:src|href|poster|data-src)\s*=\s*["']([^"']+)["']/gi;
-    for (const match of html.matchAll(pattern)) values.push(match[1]);
-    const srcsetPattern = /(?:srcset|imagesrcset)\s*=\s*["']([^"']+)["']/gi;
-    for (const match of html.matchAll(srcsetPattern)) {
-        for (const candidate of match[1].split(',')) values.push(candidate.trim().split(/\s+/)[0]);
-    }
-    for (const match of html.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) values.push(match[1]);
-    const seen = new Set();
-    return values.map((value) => ({ raw: value.trim(), url: absoluteAssetUrl(value.trim(), pageUrl) })).filter(({ raw, url }) => {
-        // A page's own canonical/root URL is a navigation link, not a
-        // downloadable asset. In particular, replacing `/` globally would
-        // corrupt every path in a root-page clone.
-        if (!url || url.href === page.href || (url.origin === page.origin && url.pathname === page.pathname && !url.search)) return false;
-        if (url.origin === page.origin && url.pathname === '/' && !url.search && !url.hash) return false;
-        const key = `${url.href}\n${raw}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
-};
-
-const safePackagePath = (url) => {
-    const decoded = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
-    const normalized = path.posix.normalize(decoded);
-    const relative = url.pathname.endsWith('/') ? path.posix.join(normalized, 'index.html') : normalized;
-    if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
-        throw new Error(`Asset path escapes the clone package: ${url.pathname}`);
-    }
-    return relative;
-};
+const safePackagePath = (url) => safePackageUrlPath(url);
 
 const cssAssetReferences = (css, pageUrl) => {
     const values = [];
@@ -435,8 +406,23 @@ const runCloneJob = async (projectId, job) => {
     const assetDirectory = path.join(packageDirectory, 'assets');
     const warnings = [];
     try {
+        // A captured resource may previously have occupied index.html/ as a
+        // directory. Keep that artifact for inspection, then free the reserved
+        // page path before rebuilding this package.
+        const pagePath = path.join(packageDirectory, 'index.html');
         try {
-            await fs.access(path.join(packageDirectory, 'index.html'));
+            const pageStat = await fs.stat(pagePath);
+            if (pageStat.isDirectory()) {
+                const recoveredPath = path.join(directory, 'source', `index-html-collision-${job.id}`);
+                await fs.mkdir(path.dirname(recoveredPath), { recursive: true });
+                await fs.rename(pagePath, recoveredPath);
+                warnings.push('Moved a previously captured resource directory away from the reserved index.html page path.');
+            }
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+        }
+        try {
+            await fs.access(pagePath);
             hadUsablePackage = true;
             await fs.cp(packageDirectory, previousPackage, { recursive: true, errorOnExist: true });
             backupReady = true;
@@ -600,7 +586,9 @@ const runCloneJob = async (projectId, job) => {
                     // External files are admitted only when the browser captured
                     // an actual 3D asset (not arbitrary private API responses).
                     if (remoteUrl.origin !== sourceOrigin && !item.is3d) continue;
-                    const local = item.path || safePackagePath(remoteUrl);
+                    const local = item.path
+                        ? safePackageRelativePath(item.path, remoteUrl.href)
+                        : safePackagePath(remoteUrl);
                     const localPath = path.resolve(packageDirectory, local);
                     if (!localPath.startsWith(`${path.resolve(packageDirectory)}${path.sep}`)) continue;
                     if (!downloadedLocals.includes(local)) downloadedLocals.push(local);
@@ -804,6 +792,22 @@ const runCloneJob = async (projectId, job) => {
         await writeJobStatus(projectId, job.id, { status: 'completed', worker: workerName, progress: 100, message, warnings, modelAssetCount: capturedModels.length, previewUrl: nextProject.previewUrl, screenshotUrl: nextProject.screenshotUrl, motionUrl: nextProject.motionUrl, splineRuntime: splineRuntime.ok ? 'completed' : 'unavailable', browserCapture: browserCapture.ok ? 'completed' : 'unavailable', motionCapture: motionCapture.ok ? 'reference-captured' : (motionCapture.skipped ? 'not-needed' : 'unavailable') });
         await fs.rm(previousPackage, { recursive: true, force: true });
     } catch (error) {
+        // Preserve files captured from the authenticated browser even when the
+        // page package cannot be finalized. The rollback below protects the
+        // last usable preview, while this job-scoped copy keeps observed 3D
+        // downloads/decoded outputs available for inspection and recovery.
+        const recoveryDirectory = path.join(directory, 'jobs', job.id, 'captured-assets');
+        for (const relative of ['assets', 'resource']) {
+            const capturedPath = path.join(packageDirectory, relative);
+            try {
+                const capturedStat = await fs.stat(capturedPath);
+                if (capturedStat.isDirectory()) {
+                    await fs.cp(capturedPath, path.join(recoveryDirectory, relative), { recursive: true, force: true });
+                }
+            } catch (copyError) {
+                if (copyError.code !== 'ENOENT') warnings.push(`Could not preserve captured ${relative}: ${copyError.message}`);
+            }
+        }
         if (hadUsablePackage && backupReady) {
             await fs.rm(packageDirectory, { recursive: true, force: true });
             await fs.rename(previousPackage, packageDirectory);
@@ -944,7 +948,7 @@ const server = createServer(async (request, response) => {
         const segments = url.pathname.split('/').filter(Boolean);
 
         if (url.pathname === '/api/health' && request.method === 'GET') {
-            sendJson(response, 200, { ok: true, service: 'html_editor', projectsRoot: projectsDir, time: new Date().toISOString() });
+            sendJson(response, 200, { ok: true, service: 'html_editor', projectsRoot: projectsDir, interactiveLoginAvailable: interactiveLoginEnabled, time: new Date().toISOString() });
             return;
         }
 
@@ -979,8 +983,8 @@ const server = createServer(async (request, response) => {
             if (segments[3] === 'jobs' && segments[4] && segments[5] === 'continue-login' && segments.length === 6 && request.method === 'POST') {
                 // This endpoint only unlocks the already running local Chromium
                 // window. No usernames, passwords, cookies or tokens go over HTTP.
-                if (!['127.0.0.1', 'localhost', '::1'].includes(bindHost)) {
-                    sendJson(response, 403, { error: 'Interactive login is available only when the editor is bound to localhost.' });
+                if (!interactiveLoginEnabled) {
+                    sendJson(response, 403, { error: 'Interactive login requires host desktop mode. Run HTML_EDITOR_MODE=host ./start_html_editor.sh, then reopen the editor at localhost.' });
                     return;
                 }
                 const jobId = segments[4];
@@ -1054,8 +1058,8 @@ const server = createServer(async (request, response) => {
 
             if (segments[3] === 'clone' && request.method === 'POST') {
                 const payload = await readJsonBody(request);
-                if (payload.interactiveLogin === true && !['127.0.0.1', 'localhost', '::1'].includes(bindHost)) {
-                    sendJson(response, 403, { error: 'Authenticated capture is desktop-only and requires the editor to bind to localhost.' });
+                if (payload.interactiveLogin === true && !interactiveLoginEnabled) {
+                    sendJson(response, 403, { error: 'Interactive login requires host desktop mode. Stop Docker mode and run HTML_EDITOR_MODE=host ./start_html_editor.sh.' });
                     return;
                 }
                 if (!/^https?:\/\//i.test(String(payload.url || ''))) {

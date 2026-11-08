@@ -325,14 +325,16 @@ const handleLoginContinue = async () => {
 const pollCloneJob = async (projectId, jobId) => {
     const status = byId('clone-status');
     const pollToken = ++clonePollToken;
-    for (let attempt = 0; attempt < 600; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 500));
+    let consecutiveErrors = 0;
+    while (pollToken === clonePollToken) {
+        await new Promise((resolve) => window.setTimeout(resolve, consecutiveErrors ? 1500 : 750));
         if (pollToken !== clonePollToken) return;
         try {
             const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/jobs/${encodeURIComponent(jobId)}`);
             if (!response.ok) throw new Error(`Job API returned ${response.status}`);
             const payload = await response.json();
             const job = payload.job;
+            consecutiveErrors = 0;
             updateCloneProgress(job);
             if (job.status === 'awaiting-login') {
                 activeLoginJobId = job.id;
@@ -368,11 +370,16 @@ const pollCloneJob = async (projectId, jobId) => {
             }
             setStatus(status, `${job.message || 'Clone worker running'} (${job.progress || 0}%)`, { loading: true });
         } catch (error) {
-            setStatus(status, `Clone status unavailable: ${error.message}`, { error: true });
-            return;
+            consecutiveErrors += 1;
+            // Keep tracking long-running authenticated captures and transient
+            // API hiccups. Previously the 5 minute polling cap left the UI
+            // permanently displaying its last update (often 8%) even after
+            // the backend had completed the job.
+            if (consecutiveErrors === 1 || consecutiveErrors % 10 === 0) {
+                setStatus(status, `Waiting for clone status (${error.message}); will retry automatically.`, { loading: true });
+            }
         }
     }
-    setStatus(status, 'Clone is still running. Progress will continue updating here; preview buttons unlock when it completes.', { loading: true });
 };
 
 const handleCaptureRequest = () => {

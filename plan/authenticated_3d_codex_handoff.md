@@ -88,3 +88,17 @@ Current flow captures the **one current page** in the interactive browser. For u
 - This exported GLB contains a static mesh only: no skin/skeleton, animations, textures, or images. The website's displayed topology counters differ from the output's quantized mesh accessor count, so don't present them as the same topology. It is a usable standalone geometry export, not an animated rig.
 - The captured original `.meshy` payload and the Meshy and Draco WASM decoders are retained in the same project. No credentials or authorization parameters were persisted. Existing Playwright regression coverage validates worker output handling; the test suite passes (7 tests). The real authenticated capture itself completed in Chromium and produced the GLB.
 - Blender import/UI validation remains pending because Blender is not available in the host environment. Static GLB header, chunk, scene, and geometry accessor checks passed.
+
+### Authenticated Meshy package path collision (2026-11-02)
+
+- The latest authenticated capture reached final package assembly, then failed with `EISDIR` while opening `website-package/index.html`. The package contained a captured HTML resource at `website-package/index.html/index.html`, which occupied the page's reserved path as a directory. The package rollback then restored the previous package, so response metadata did not guarantee the captured model file remained in the package.
+- Added shared Node path validation so resource URLs and browser-recorded paths that collide with reserved page/manifest roots are stored under stable `assets/captured/` aliases. Playwright capture similarly aliases root, trailing-slash, and reserved HTML/manifest paths before writing response bodies.
+- Before a retry, a malformed existing `index.html/` directory is moved into that job's source artifacts instead of being discarded. If final assembly fails, the job preserves captured `assets/` and `resource/` trees under `jobs/<job-id>/captured-assets/` before restoring the last package.
+- Validation: five Node asset/path tests pass; eight authenticated 3D capture Python tests pass; Node/Python syntax checks and `git diff --check` pass; headless Playwright received HTTP 200 from the editor root. The authenticated Meshy job has not yet been rerun after this fix.
+
+### Second authenticated Meshy model capture (2026-11-01)
+
+- The user signed in through the visible Chromium window and opened a second anatomical model. Capture project `meshy-model-capture-2-e4a3bd9b`, job `1793553819310-8f2dd2e4`, completed successfully.
+- Captured a second worker-decoded GLB at `projects/meshy-model-capture-2-e4a3bd9b/website-package/assets/decoded-runtime/mesh-worker-output-00.glb` (12,876,848 bytes). GLB magic and declared size validate; the browser report marks it as decoded from Meshy's worker. The capture screenshot shows the selected second model (609,980 faces / 304,962 displayed vertices).
+- GLB metadata reports one scene, one mesh, one material and a POSITION accessor with 462,991 vertices. Like the first export, this file contains no texture images, skin/skeleton, or animation tracks: it is a static mesh export.
+- The original task `.meshy` payload was also captured. No session credentials or authorization data were saved.

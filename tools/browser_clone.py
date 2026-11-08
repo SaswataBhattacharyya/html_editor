@@ -35,6 +35,18 @@ def should_capture_cross_origin_asset(same_origin, is_model, generic_binary, is_
     return same_origin or is_model or generic_binary or is_wasm
 
 
+def safe_capture_relative_path(url):
+    parsed = urlparse(url)
+    relative = Path(unquote(parsed.path).lstrip("/"))
+    reserved_roots = {"index.html", "rendered.html", "manifest.json"}
+    if (not relative.parts or relative.as_posix() == "." or parsed.path.endswith("/")
+            or relative.parts[0].lower() in reserved_roots):
+        extension = relative.suffix or ".bin"
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+        relative = Path("assets") / "captured" / f"{digest}{extension}"
+    return relative
+
+
 def mesh_worker_capture_init_script():
     return r"""(() => {
       window.__htmlEditorDecodedMeshOutputs = [];
@@ -282,7 +294,7 @@ def main():
                     if extension == ".glb" and body[:4] != b"glTF":
                         return  # Reject mislabeled HTML/API responses.
                     if same_origin:
-                        relative = Path(unquote(parsed.path).lstrip("/"))
+                        relative = safe_capture_relative_path(response.url)
                     else:
                         digest = hashlib.sha256(response.url.encode("utf-8")).hexdigest()[:20]
                         hostname = "".join(c for c in parsed.hostname or "" if c.isalnum() or c in ".-")

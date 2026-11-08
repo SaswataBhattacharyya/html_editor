@@ -16,6 +16,7 @@ from tools.browser_clone import (
     should_capture_cross_origin_asset,
     should_capture_authenticated_fetch,
     should_retain_authenticated_response,
+    safe_capture_relative_path,
     wait_for_login_continue,
 )
 
@@ -38,6 +39,16 @@ class FakeDownload:
 
 
 class TestDownloadCapture(unittest.TestCase):
+    def test_reserved_page_paths_are_aliased_during_browser_asset_capture(self):
+        for url in (
+            "https://meshy.invalid/",
+            "https://meshy.invalid/resource/",
+            "https://meshy.invalid/index.html/",
+            "https://meshy.invalid/index.html/nested/model.glb",
+        ):
+            relative = safe_capture_relative_path(url)
+            self.assertEqual(relative.parts[:2], ("assets", "captured"))
+
     def test_meshy_payload_is_recognized_as_a_runtime_model_format(self):
         self.assertIn(".meshy", MODEL_EXTENSIONS)
 
