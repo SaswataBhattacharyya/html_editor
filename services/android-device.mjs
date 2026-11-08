@@ -115,12 +115,16 @@ export async function listAvds() {
 export async function startAvd(name) {
     const choices = await listAvds();
     if (!choices.includes(name)) throw new Error('AVD not found. Create a Google Play-enabled AVD in Android Studio first.');
-    const child = spawn(EMULATOR, ['-avd', name], {
-        detached: true, shell: false, stdio: 'ignore', windowsHide: true
+    return new Promise((resolve, reject) => {
+        const child = spawn(EMULATOR, ['-avd', name], {
+            detached: true, shell: false, stdio: 'ignore', windowsHide: true
+        });
+        child.once('error', error => reject(new Error('Could not start emulator: ' + error.message)));
+        child.once('spawn', () => {
+            child.unref();
+            resolve({ started: true, avd: name, note: 'Emulator process started. Wait for Android to boot, then refresh devices.' });
+        });
     });
-    child.on('error', () => {});
-    child.unref();
-    return { started: true, avd: name, note: 'Wait for Android to boot, then refresh devices.' };
 }
 
 export async function openPlayListing(playUrl, serial) {
@@ -157,9 +161,14 @@ export async function captureScreen(serial) {
 
 export async function captureAccessibility(serial) {
     await adb(['shell', 'uiautomator', 'dump', '/sdcard/html_editor_ui.xml'], serial, { timeoutMs: 20000 });
-    const { stdout } = await adb(['exec-out', 'cat', '/sdcard/html_editor_ui.xml'], serial);
-    const xml = stdout.toString('utf8');
-    if (!xml.includes('<hierarchy')) throw new Error('Android accessibility hierarchy was unavailable');
+    let xml;
+    try {
+        const { stdout } = await adb(['exec-out', 'cat', '/sdcard/html_editor_ui.xml'], serial);
+        xml = stdout.toString('utf8');
+    } finally {
+        await adb(['shell', 'rm', '/sdcard/html_editor_ui.xml'], serial).catch(() => {});
+    }
+    if (!xml?.includes('<hierarchy')) throw new Error('Android accessibility hierarchy was unavailable');
     return xml;
 }
 
