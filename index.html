@@ -867,6 +867,22 @@
                 transition-duration: 0.01ms !important;
             }
         }
+
+        .mobile-workbench-tabs { display:flex; gap:8px; padding:0 0 16px; border-bottom:1px solid #94a3b830; margin-bottom:16px; }
+        .mobile-workbench-tabs .workbench-button[aria-selected="true"] { background:#2563eb; color:#fff; }
+        #web-workbench-page[hidden], #mobile-workbench-page[hidden], #mobile-apk-fields[hidden], #mobile-play-fields[hidden] { display:none !important; }
+        .mobile-help { color:#64748b; font-size:12px; line-height:1.55; margin:10px 0; }
+        #mobile-workbench-page h3 { font-size:16px; font-weight:700; margin:0 0 10px; }
+        #mobile-workbench-page input, #mobile-workbench-page select { max-width:100%; }
+        .mobile-preview { max-width:340px; margin:12px auto; text-align:center; }
+        .mobile-preview img { max-width:100%; max-height:490px; border:1px solid #64748b; border-radius:12px; cursor:crosshair; }
+        .mobile-captures { display:flex; gap:8px; overflow-x:auto; padding:10px 0; font-size:12px; }
+        .mobile-thumbnail { border:1px solid #94a3b8; background:transparent; padding:5px; border-radius:8px;
+            cursor:pointer; min-width:116px; width:116px; color:inherit; }
+        .mobile-thumbnail img { width:100%; max-height:140px; object-fit:contain; display:block; border-radius:5px; }
+        .mobile-thumbnail span { display:block; margin-top:6px; line-height:1.3; }
+        #mobile-generated-link { color:#2563eb; text-decoration:underline; font-size:13px; }
+        #mobile-open-play[hidden], #mobile-install[hidden] { display:none !important; }
     </style>
 </head>
 
@@ -900,6 +916,7 @@
     <script type="module">
         import './js/editor.js';
         import './js/workbench.js';
+        import './js/mobile-cloner.js';
     </script>
 
     <div class="workbench-scrim" id="workbench-scrim" aria-hidden="true"></div>
@@ -913,6 +930,11 @@
             <button class="workbench-close" id="ai-close" type="button" aria-label="Close AI workbench">&times;</button>
         </div>
         <div class="workbench-drawer-body">
+            <nav class="mobile-workbench-tabs" aria-label="AI workbench pages">
+                <button id="ai-site-tab" class="workbench-button" type="button" aria-selected="true">Website tools</button>
+                <button id="ai-mobile-tab" class="workbench-button" type="button" aria-selected="false">Mobile App Cloner</button>
+            </nav>
+            <div id="web-workbench-page">
             <section class="workbench-section">
                 <p class="workbench-kicker">Clone a website</p>
                 <div class="workbench-field">
@@ -990,6 +1012,97 @@
                 </div>
                 <pre class="workbench-status" id="animation-plan-output" aria-live="polite" style="white-space:pre-wrap; max-height:180px; overflow:auto; display:none;"></pre>
             </section>
+            </div>
+            <div id="mobile-workbench-page" hidden>
+                <section class="workbench-section">
+                    <p class="workbench-kicker">Android · observational reconstruction</p>
+                    <h3>Mobile App Cloner</h3>
+                    <p class="mobile-help">Install and explore an app you are authorized to examine. Login happens on your own Android device; credentials are never requested by this editor.</p>
+                    <p id="mobile-project" class="mobile-help">No active project. Create one via Project above.</p>
+                    <div class="workbench-row">
+                        <button class="workbench-button" id="mobile-choose-project" type="button">Select / Create Project</button>
+                    </div>
+                    <div class="workbench-field"><label for="mobile-source-type">App source</label>
+                        <select id="mobile-source-type"><option value="play">Google Play URL</option><option value="apk">APK upload / direct HTTPS URL</option></select>
+                    </div>
+                    <div id="mobile-play-fields" class="workbench-field">
+                        <label for="mobile-play-url">Google Play listing</label>
+                        <input id="mobile-play-url" type="url" placeholder="https://play.google.com/store/apps/details?id=com.hevy">
+                    </div>
+                    <div id="mobile-apk-fields" hidden>
+                        <div class="workbench-field"><label for="mobile-package">Package ID (or inspect APK to detect)</label>
+                            <input id="mobile-package" placeholder="com.example.application" autocomplete="off"></div>
+                        <div class="workbench-field"><label for="mobile-apk-file">APK file (max 250 MiB)</label>
+                            <input id="mobile-apk-file" type="file" accept=".apk,application/vnd.android.package-archive"></div>
+                        <div class="workbench-row"><button class="workbench-button" id="mobile-upload" type="button">Upload APK</button></div>
+                        <div class="workbench-field"><label for="mobile-apk-url">Or direct HTTPS APK URL (no redirects)</label>
+                            <input id="mobile-apk-url" type="url" placeholder="https://your-host.com/app.apk"></div>
+                        <div class="workbench-row">
+                            <button class="workbench-button" id="mobile-download" type="button">Fetch APK</button>
+                            <button class="workbench-button" id="mobile-inspect" type="button">Inspect APK metadata</button>
+                        </div>
+                    </div>
+                    <div class="workbench-row"><button class="workbench-button primary" id="mobile-prepare" type="button">Prepare Mobile Project</button></div>
+                    <div id="mobile-phase" class="mobile-help">Stage: not-started</div>
+                </section>
+                <section class="workbench-section">
+                    <p class="workbench-kicker">Runtime</p><h3>Android device</h3>
+                    <div id="mobile-tools" class="mobile-help">Checking tool availability…</div>
+                    <div class="workbench-field"><label for="mobile-device">Connected Android device</label><select id="mobile-device"></select></div>
+                    <div class="workbench-field"><label for="mobile-avd">Configured emulator</label><select id="mobile-avd"></select></div>
+                    <div class="workbench-row">
+                        <button class="workbench-button" id="mobile-refresh" type="button">Refresh Devices</button>
+                        <button class="workbench-button" id="mobile-start-avd" type="button">Start Emulator</button>
+                    </div>
+                    <div class="workbench-row">
+                        <button class="workbench-button" id="mobile-open-play" type="button">Open in Google Play</button>
+                        <button class="workbench-button" id="mobile-install" type="button" hidden>Install APK</button>
+                        <button class="workbench-button" id="mobile-verify" type="button">Verify Installed</button>
+                        <button class="workbench-button" id="mobile-launch" type="button">Launch App</button>
+                    </div>
+                    <p class="mobile-help">Play Store installation and account sign-in are completed by you on the Android device. After login, press Resume. Do not capture passwords, payment or private screens.</p>
+                    <div class="workbench-row">
+                        <button class="workbench-button" id="mobile-pause" type="button">Pause for Login</button>
+                        <button class="workbench-button primary" id="mobile-resume" type="button">Resume After Login</button>
+                    </div>
+                </section>
+                <section class="workbench-section">
+                    <p class="workbench-kicker">Evidence</p><h3>Explore and capture</h3>
+                    <div class="workbench-field"><label for="mobile-screen-label">Screen name</label>
+                        <input id="mobile-screen-label" placeholder="Workout home / Exercise library"></div>
+                    <div class="workbench-row">
+                        <button class="workbench-button primary" id="mobile-capture" type="button">Capture Screen + UI</button>
+                        <button class="workbench-button" id="mobile-back" type="button">Back</button>
+                        <button class="workbench-button" id="mobile-home" type="button">Home</button>
+                        <button class="workbench-button" id="mobile-swipe-up" type="button">Swipe Up</button>
+                        <button class="workbench-button" id="mobile-swipe-down" type="button">Swipe Down</button>
+                    </div>
+                    <div class="mobile-preview"><img id="mobile-live-image" alt="Latest Android screenshot; click to tap" hidden>
+                        <p id="mobile-preview-note" class="mobile-help">Screenshots appear after capture.</p></div>
+                    <div id="mobile-captures" class="mobile-captures" aria-live="polite"></div>
+                </section>
+                <section class="workbench-section">
+                    <p class="workbench-kicker">Reconstruction</p><h3>Analyze and generate</h3>
+                    <p class="mobile-help">Create a grounded screen specification and a basic React Native/Expo project. AI agent-driven functional reconstruction and visual-diff tests require the Codex local handoff.</p>
+                    <div class="workbench-row">
+                        <button class="workbench-button" id="mobile-analyze" type="button">Build Screen Spec</button>
+                        <button class="workbench-button primary" id="mobile-generate" type="button">Generate Expo Starter</button>
+                    </div>
+                    <div class="workbench-field"><label for="mobile-model-provider">Optional model-generated App.js</label>
+                        <select id="mobile-model-provider"><option value="ollama">Local Ollama</option>
+                            <option value="openrouter">OpenRouter (cloud, requires consent)</option></select>
+                    </div>
+                    <div class="workbench-field"><label for="mobile-model-name">Model override (optional)</label>
+                        <input id="mobile-model-name" placeholder="Uses configured model if left blank"></div>
+                    <div class="workbench-field"><label for="mobile-model-guidance">Additional instructions</label>
+                        <textarea id="mobile-model-guidance" placeholder="Only specify behavior confirmed in captured screens."></textarea></div>
+                    <label class="mobile-help"><input id="mobile-share-ui" type="checkbox"> I approve sending sanitized screen labels to OpenRouter if selected.</label>
+                    <div class="workbench-row"><button class="workbench-button" id="mobile-generate-ai" type="button">Generate AI Draft</button></div>
+                    <p class="mobile-help">AI output is untrusted code and must be reviewed and tested before running. Only observed labels and screen names are sent; no APK or screenshots.</p>
+                    <a id="mobile-generated-link" href="#" target="_blank" rel="noopener noreferrer" hidden>View generated App.js</a>
+                </section>
+                <div class="workbench-status" id="mobile-status" role="status" aria-live="polite">Ready. Select a project to begin.</div>
+            </div>
         </div>
     </aside>
 

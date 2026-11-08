@@ -8,7 +8,8 @@
     "build:css": "tailwindcss -i ./src/input.css -o ./dist/output.css --watch",
     "start": "node server.mjs",
     "dev": "npm run build:css & node server.mjs",
-    "server": "node server.mjs"
+    "server": "node server.mjs",
+    "test:mobile": "node --test test/mobile-cloner.test.mjs"
   },
   "keywords": [],
   "author": "",

@@ -14,17 +14,12 @@ RUN npm ci --ignore-scripts
 
 COPY . .
 
-# PinePaper is a separate MCP process. Install its runtime dependencies in a
-# dedicated directory and use the already-built dist/ artifact from the repo.
-RUN mkdir -p /opt/pinepaper
-COPY mcp-server/package*.json /opt/pinepaper/
-RUN cd /opt/pinepaper && npm ci --include=dev --ignore-scripts
-COPY mcp-server/dist /opt/pinepaper/dist
+# Optional PinePaper runtime is not tracked in git; install or mount it separately.
+# Do not COPY missing mcp-server artifacts during a clean checkout.
 
 ENV NODE_ENV=development
 ENV PORT=3000
 ENV HTML_EDITOR_CHROMIUM_PATH=/usr/bin/chromium
-ENV PINEPAPER_ROOT=/opt/pinepaper
 ENV OLLAMA_BASE_URL=http://host.docker.internal:11434
 
 EXPOSE 3000

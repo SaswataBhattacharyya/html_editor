@@ -78,3 +78,6 @@ npm run build
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details. 
+## Mobile App Cloner (feature branch)
+
+The AI Workbench includes a local Android mobile-app reconstruction workflow built around ADB, a manually authorized emulator/device, captures and an Expo starter. See [Mobile App Cloner setup](docs/MOBILE_CLONER.md) and [Codex local handoff](docs/CODEX_MOBILE_HANDOFF.md). Run `npm run test:mobile` for focused tests. This is observational UI reconstruction, not full APK-source recovery.

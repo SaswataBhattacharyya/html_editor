@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { convertBuffer } from '@visioncortex/vtracer';
 import { runPinePaper } from './tools/pinepaper-client.mjs';
+import { handleMobileApi } from './services/mobile-cloner.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const projectsDir = path.join(rootDir, 'projects');
@@ -811,6 +812,15 @@ const submitAnimation = async (projectId, payload) => {
 
 const serveStatic = async (request, response, pathname) => {
     const requestedPath = pathname === '/' ? '/index.html' : pathname;
+    // The editor is a local development utility, not a public file-sharing server.
+    // Never serve credential files, raw APKs, capture metadata, or internal mobile state.
+    const privatePath = requestedPath.split('/').some(segment => segment.startsWith('.') && segment !== '.well-known');
+    const mobilePath = /^\/projects\/[^/]+\/mobile\//.test(requestedPath);
+    const publicMobileArtifact = /^\/projects\/[a-zA-Z0-9._-]+\/mobile\/(?:captures\/[a-zA-Z0-9._-]+\.png|analysis\/screen-spec\.json|generated\/expo-starter\/(?:App\.js|README\.md|screens\.json|app\.json|package\.json))$/.test(requestedPath);
+    if (privatePath || (mobilePath && !publicMobileArtifact)) {
+        sendJson(response, 403, { error: 'This file is private' });
+        return;
+    }
     const absolutePath = path.resolve(rootDir, `.${requestedPath}`);
     if (absolutePath !== rootDir && !absolutePath.startsWith(`${rootDir}${path.sep}`)) {
         sendJson(response, 403, { error: 'Forbidden path' });
@@ -836,6 +846,7 @@ const server = createServer(async (request, response) => {
     try {
         const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
         const segments = url.pathname.split('/').filter(Boolean);
+        if (await handleMobileApi(request, response, segments, { sendJson, projectPath, readProject })) return;
 
         if (url.pathname === '/api/health' && request.method === 'GET') {
             sendJson(response, 200, { ok: true, service: 'html_editor', projectsRoot: projectsDir, time: new Date().toISOString() });
@@ -964,7 +975,7 @@ const server = createServer(async (request, response) => {
 });
 
 await fs.mkdir(projectsDir, { recursive: true });
-server.listen(port, '0.0.0.0', () => {
+server.listen(port, process.env.HTML_EDITOR_HOST || '127.0.0.1', () => {
     console.log(`[html_editor] listening on http://127.0.0.1:${port}`);
     console.log(`[html_editor] projects root: ${projectsDir}`);
 });
