@@ -1,0 +1,16 @@
+{
+  "note": "Example external MCP configuration for a local coding agent. This file does not start servers automatically. Follow each tool's current upstream setup guide.",
+  "mcpServers": {
+    "mobile-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@mobilenext/mobile-mcp@latest"
+      ],
+      "env": {
+        "MOBILEMCP_DISABLE_TELEMETRY": "1"
+      }
+    }
+  },
+  "reaSetup": "npx rea-agents setup (interactive; may require user approval and additional APK analysis toolchains)"
+}

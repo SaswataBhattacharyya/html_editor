@@ -108,6 +108,7 @@ const closeProjectDialog = () => {
 const selectProject = (project) => {
     window.workbenchProject = project;
     document.body.dataset.projectId = project.id;
+    window.dispatchEvent(new CustomEvent('workbench:project-selected', { detail: { id: project.id } }));
     const status = byId('clone-status');
     setStatus(status, `Project “${project.name}” is active. Backend workspace: ${project.id}`);
     closeProjectDialog();
